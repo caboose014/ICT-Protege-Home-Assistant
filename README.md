@@ -1,6 +1,8 @@
 # ICT Protege Automation for Home Assistant
 
-![Icon](custom_components/ict_automation/icon.png)
+<p align="center">
+  <img src="custom_components/ict_automation/icon.png" width="120" height="120" alt="ICT Automation Icon">
+</p>
 
 A custom integration to control ICT Protege WX/GX systems via Home Assistant.
 
