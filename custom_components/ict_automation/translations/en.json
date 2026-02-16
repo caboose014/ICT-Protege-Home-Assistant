@@ -127,6 +127,22 @@
           "port": "Port",
           "password": "Service PIN"
         }
+      },
+      "scan_doors": {
+        "title": "Scan Doors",
+        "data": { "limit": "Limit" }
+      },
+      "scan_areas": {
+        "title": "Scan Areas",
+        "data": { "limit": "Limit" }
+      },
+      "scan_inputs": {
+        "title": "Scan Inputs",
+        "data": { "limit": "Limit" }
+      },
+      "scan_outputs": {
+        "title": "Scan Outputs",
+        "data": { "limit": "Limit" }
       }
     },
     "error": {
