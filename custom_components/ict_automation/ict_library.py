@@ -10,8 +10,6 @@ PKT_TYPE_DATA = 0x01
 PKT_TYPE_SYSTEM = 0xC0
 
 class ICTClient:
-    """Handles low-level TCP communication with ICT Controller."""
-
     def __init__(self, host, port, password):
         self.host = host
         self.port = port
@@ -32,13 +30,17 @@ class ICTClient:
     def register_callback(self, callback):
         self._callbacks.append(callback)
 
-    def set_configuration(self, doors, areas, inputs, outputs, troubles):
+    # UPDATED: Removed 'troubles' argument to fix the TypeError
+    def set_configuration(self, doors, areas, inputs, outputs):
         self.monitored_items = []
         for d in doors: self.monitored_items.append((0x00, 0x01, d))
         for a in areas: self.monitored_items.append((0x00, 0x02, a))
         for o in outputs: self.monitored_items.append((0x00, 0x03, o))
-        for i in inputs: self.monitored_items.append((0x00, 0x04, i))
-        for t in troubles: self.monitored_items.append((0x00, 0x06, t))
+        
+        # Automatically monitor both Input State (0x04) and Trouble State (0x06) for every input
+        for i in inputs: 
+            self.monitored_items.append((0x00, 0x04, i)) 
+            self.monitored_items.append((0x00, 0x06, i))
 
     async def start(self):
         self._shutdown = False
