@@ -6,7 +6,7 @@ from .const import DOMAIN, CONF_HOST, CONF_PORT, CONF_PASSWORD, CONF_DOORS, CONF
 from .ict_library import ICTClient
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS = ["lock", "binary_sensor", "switch", "alarm_control_panel", "select"]
+PLATFORMS = ["lock", "binary_sensor", "switch", "alarm_control_panel", "select", "button"]
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool: return True
 

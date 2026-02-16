@@ -3,7 +3,7 @@ from homeassistant.components.lock import LockEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import callback
 from homeassistant.helpers.entity import DeviceInfo
-from .const import DOMAIN, CONF_DOORS
+from .const import CMD_DOOR_UNLOCK_LATCH, CMD_DOOR_LOCK, DOMAIN, CONF_DOORS
 
 async def async_setup_entry(hass, entry, async_add_entities):
     client = hass.data[DOMAIN][entry.entry_id]
@@ -46,8 +46,14 @@ class ICTDoor(LockEntity):
     @property
     def is_open(self): return self._is_open
 
-    async def async_lock(self, **kwargs):
-        await self._client.send_command(0x01, 0x00, self._door_id)
+async def async_lock(self, **kwargs) -> None:
+        """Lock the door."""
+        code = kwargs.get("code", None)
+        # Send Command 1 (Lock)
+        await self._client.send_command_with_pin(0x01, CMD_DOOR_LOCK, self._door_id, code)
 
-    async def async_unlock(self, **kwargs):
-        await self._client.send_command(0x01, 0x02, self._door_id)
+async def async_unlock(self, **kwargs) -> None:
+        """Unlock the door (Latch Open)."""
+        code = kwargs.get("code", None)
+        # Send Command 2 (Latch Unlock)
+        await self._client.send_command_with_pin(0x01, CMD_DOOR_UNLOCK_LATCH, self._door_id, code)
