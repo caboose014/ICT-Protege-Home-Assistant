@@ -4,14 +4,16 @@ from homeassistant.components.alarm_control_panel import (
     AlarmControlPanelEntityFeature,
     CodeFormat,
 )
-from homeassistant.const import (
-    STATE_ALARM_ARMED_AWAY,
-    STATE_ALARM_ARMED_HOME,
-    STATE_ALARM_ARMED_NIGHT,
-    STATE_ALARM_DISARMED,
-    STATE_ALARM_TRIGGERED,
-    STATE_ALARM_ARMING,
-)
+
+# FIXED: Constants defined locally to prevent ImportError on HA 2025.1+
+# These were removed from homeassistant.const
+STATE_ALARM_DISARMED = "disarmed"
+STATE_ALARM_ARMED_HOME = "armed_home"
+STATE_ALARM_ARMED_AWAY = "armed_away"
+STATE_ALARM_ARMED_NIGHT = "armed_night"
+STATE_ALARM_TRIGGERED = "triggered"
+STATE_ALARM_ARMING = "arming"
+
 from homeassistant.core import callback
 from homeassistant.helpers.entity import DeviceInfo
 from .const import (
