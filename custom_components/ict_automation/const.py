@@ -23,5 +23,6 @@ CMD_DOOR_UNLOCK_LATCH = 2     # Unlocks and holds it open (For the Toggle Switch
 CMD_DOOR_UNLOCK_MOMENTARY = 3 # Unlocks for defined time then relocks (For the Button)
 
 # --- Input Control Commands ---
-CMD_INPUT_BYPASS = 1     # Bypass the sensor
-CMD_INPUT_UNBYPASS = 2   # Enable the sensor
+CMD_INPUT_BYPASS_ONCE = 1      # Bypass until next disarm
+CMD_INPUT_UNBYPASS = 2         # Clear bypass (Active)
+CMD_INPUT_BYPASS_PERMANENT = 3 # Bypass permanently

@@ -19,11 +19,12 @@ _LOGGER = logging.getLogger(__name__)
 
 
 PLATFORMS: list[Platform] = [
-    Platform.BINARY_SENSOR,
-    Platform.LOCK,
-    Platform.ALARM_CONTROL_PANEL,
-    Platform.SWITCH,
-    Platform.BUTTON,  # <--- Make sure this is here!
+    Platform.BINARY_SENSOR,       # Inputs / Doors / Smoke
+    Platform.LOCK,                # Door Latches
+    Platform.ALARM_CONTROL_PANEL, # Areas
+    Platform.SWITCH,              # Outputs (Relays)
+    Platform.BUTTON,              # <--- Door Momentary Buttons (CRITICAL FOR FIX)
+    Platform.SELECT,              # <--- Input Bypass Dropdowns
 ]
 
 
