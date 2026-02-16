@@ -2,48 +2,146 @@
   "config": {
     "step": {
       "user": {
-        "title": "Connect to ICT Controller",
-        "description": "Enter your ICT Protege controller details.",
-        "data": { "host": "IP Address", "port": "Port", "password": "PIN Code" }
+        "title": "Connect to ICT Protege",
+        "description": "Enter the details for your ICT Controller's Automation Service (TCP Port 21000).",
+        "data": {
+          "host": "Controller IP Address",
+          "port": "Port (Default: 21000)",
+          "password": "Service PIN (User Code)"
+        }
       }
     },
-    "error": { "cannot_connect": "Failed to connect", "invalid_auth": "Invalid authentication", "unknown": "Unexpected error" },
-    "abort": { "already_configured": "Device is already configured" }
+    "error": {
+      "cannot_connect": "Failed to connect. Check IP/Port.",
+      "invalid_auth": "Authentication failed. Check Service PIN.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "already_configured": "Device is already configured."
+    }
   },
   "options": {
     "step": {
       "init": {
-        "title": "ICT Device Management",
-        "menu_options": { "scan_devices": "Scan for Devices", "raw_editor": "Edit Configuration (YAML)", "configure_connection": "Edit Connection", "edit_device": "Rename Device", "add_door": "Add Door", "add_area": "Add Area", "add_input": "Add Input", "add_trouble": "Add Trouble Input", "add_output": "Add Output", "remove_device": "Remove Devices" }
+        "title": "ICT Automation Menu",
+        "menu_options": {
+          "scan_devices": "Scan for Devices",
+          "configure_arming": "Configure Arming Modes",
+          "configure_connection": "Edit Connection Settings",
+          "add_door": "Add Door",
+          "add_area": "Add Area",
+          "add_input": "Add Input",
+          "add_output": "Add Output",
+          "edit_device": "Edit Device Name",
+          "remove_device": "Remove Device",
+          "raw_editor": "Advanced: Edit YAML Config"
+        }
       },
-      "scan_devices": { "title": "Select Category", "menu_options": { "scan_all": "Scan All Types", "scan_doors": "Scan Doors", "scan_areas": "Scan Areas", "scan_inputs": "Scan Inputs", "scan_troubles": "Scan Trouble Inputs", "scan_outputs": "Scan Outputs", "back": "Back" } },
-      "scan_all": { "title": "Scan All", "description": "Set scan limits.", "data": { "limit_areas": "Areas", "limit_doors": "Doors", "limit_outputs": "Outputs", "limit_inputs": "Inputs", "limit_troubles": "Troubles" } },
-      "scan_doors": { "title": "Scan Doors", "data": { "limit": "Limit" } },
-      "scan_areas": { "title": "Scan Areas", "data": { "limit": "Limit" } },
-      "scan_inputs": { "title": "Scan Inputs", "data": { "limit": "Limit" } },
-      "scan_troubles": { "title": "Scan Troubles", "data": { "limit": "Limit" } },
-      "scan_outputs": { "title": "Scan Outputs", "data": { "limit": "Limit" } },
-      "configure_connection": { "title": "Edit Connection", "data": { "host": "IP", "port": "Port", "password": "PIN" } },
-      "add_door": { "title": "Add Door", "data": { "dev_id": "ID", "name": "Name", "add_another": "Add another?" } },
-      "add_area": { "title": "Add Area", "data": { "dev_id": "ID", "name": "Name", "add_another": "Add another?" } },
-      "add_input": { "title": "Add Input", "data": { "dev_id": "ID", "name": "Name", "add_another": "Add another?" } },
-      "add_trouble": { "title": "Add Trouble Input", "data": { "dev_id": "ID", "name": "Name", "add_another": "Add another?" } },
-      "add_output": { "title": "Add Output", "data": { "dev_id": "ID", "name": "Name", "add_another": "Add another?" } },
-      "edit_device": { "title": "Rename Device", "menu_options": { "edit_door": "Edit Doors", "edit_area": "Edit Areas", "edit_input": "Edit Inputs", "edit_trouble": "Edit Troubles", "edit_output": "Edit Outputs", "back": "Back" } },
-      "edit_door": { "title": "Select Door", "data": { "item": "Door" } },
-      "edit_area": { "title": "Select Area", "data": { "item": "Area" } },
-      "edit_input": { "title": "Select Input", "data": { "item": "Input" } },
-      "edit_trouble": { "title": "Select Trouble", "data": { "item": "Trouble" } },
-      "edit_output": { "title": "Select Output", "data": { "item": "Output" } },
-      "edit_confirm": { "title": "Rename", "description": "New name for ID {id}", "data": { "name": "New Name" } },
-      "remove_device": { "title": "Remove Device", "menu_options": { "remove_door": "Remove Door", "remove_area": "Remove Area", "remove_input": "Remove Input", "remove_trouble": "Remove Trouble", "remove_output": "Remove Output", "back": "Back" } },
-      "remove_door": { "title": "Remove Door", "data": { "items": "Doors" } },
-      "remove_area": { "title": "Remove Area", "data": { "items": "Areas" } },
-      "remove_input": { "title": "Remove Input", "data": { "items": "Inputs" } },
-      "remove_trouble": { "title": "Remove Trouble", "data": { "items": "Troubles" } },
-      "remove_output": { "title": "Remove Output", "data": { "items": "Outputs" } },
-      "raw_editor": { "title": "Edit YAML", "description": "Edit config manually", "data": { "config_yaml": "YAML" } }
+      "configure_arming": {
+        "title": "Arming Panel Options",
+        "description": "Select which arming modes should be visible on the Alarm Panel card in Home Assistant.",
+        "data": {
+          "enable_arm_away": "Show 'Arm Away'",
+          "enable_arm_stay": "Show 'Arm Stay' (Home)",
+          "enable_arm_night": "Show 'Arm Night' (Sleep)",
+          "enable_arm_bypass": "Show 'Force Arm' (Vacation)"
+        }
+      },
+      "add_door": {
+        "title": "Add Door",
+        "description": "Enter the ID from the 'Reporting ID' or 'Record' column in Protege.",
+        "data": {
+          "dev_id": "Door ID",
+          "name": "Door Name",
+          "next_action": "Next Action"
+        }
+      },
+      "add_area": {
+        "title": "Add Area",
+        "description": "Enter the ID from the 'Reporting ID' or 'Record' column in Protege.",
+        "data": {
+          "dev_id": "Area ID",
+          "name": "Area Name",
+          "next_action": "Next Action"
+        }
+      },
+      "add_input": {
+        "title": "Add Input",
+        "description": "Enter the ID from the 'Reporting ID' or 'Record' column in Protege.",
+        "data": {
+          "dev_id": "Input ID",
+          "name": "Input Name",
+          "next_action": "Next Action"
+        }
+      },
+      "add_output": {
+        "title": "Add Output",
+        "description": "Enter the ID from the 'Reporting ID' or 'Record' column in Protege.",
+        "data": {
+          "dev_id": "Output ID",
+          "name": "Output Name",
+          "next_action": "Next Action"
+        }
+      },
+      "scan_all": {
+        "title": "Scan All Devices",
+        "description": "How many IDs should we check for each type? (Starting from ID 1)",
+        "data": {
+          "limit_areas": "Scan Areas (1 to X)",
+          "limit_doors": "Scan Doors (1 to X)",
+          "limit_inputs": "Scan Inputs (1 to X)",
+          "limit_outputs": "Scan Outputs (1 to X)"
+        }
+      },
+      "remove_device": {
+        "title": "Remove Devices",
+        "menu_options": {
+          "remove_door": "Remove Door",
+          "remove_area": "Remove Area",
+          "remove_input": "Remove Input",
+          "remove_output": "Remove Output",
+          "back": "Back to Main Menu"
+        }
+      },
+      "edit_device": {
+        "title": "Edit Device Name",
+        "menu_options": {
+          "edit_door": "Edit Door",
+          "edit_area": "Edit Area",
+          "edit_input": "Edit Input",
+          "edit_output": "Edit Output",
+          "back": "Back to Main Menu"
+        }
+      },
+      "edit_confirm": {
+        "title": "Rename Device",
+        "description": "Enter the new name for device ID {id}.",
+        "data": {
+          "name": "New Name"
+        }
+      },
+      "configure_connection": {
+        "title": "Connection Settings",
+        "data": {
+          "host": "IP Address",
+          "port": "Port",
+          "password": "Service PIN"
+        }
+      }
     },
-    "error": { "id_exists": "ID already exists", "no_devices": "No devices found.", "yaml_error": "Invalid YAML" }
+    "error": {
+      "id_exists": "A device with this ID already exists.",
+      "no_devices": "No devices of this type found to edit/remove.",
+      "cannot_connect": "Could not connect to controller.",
+      "invalid_auth": "Service PIN rejected."
+    }
+  },
+  "selector": {
+    "next_action": {
+      "options": {
+        "add_more": "Save & Add Another",
+        "finish": "Save & Finish"
+      }
+    }
   }
 }
