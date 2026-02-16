@@ -13,7 +13,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
     entities = []
     
     for k, v in outputs_data.items():
-        # Handle Config Format
+        # Handle Config Format safely
         name = v.get("name", str(v)) if isinstance(v, dict) else str(v)
         entities.append(ICTOutputSwitch(client, int(k), name))
 
@@ -33,7 +33,8 @@ class ICTOutputSwitch(SwitchEntity):
             identifiers={(DOMAIN, f"output_{self._dev_id}")},
             name=self._attr_name,
             manufacturer="Integrated Control Technology",
-            model="Protege Output"
+            model="Protege Output",
+            # Note: via_device is removed to prevent registry errors
         )
 
     async def async_added_to_hass(self):
@@ -49,9 +50,9 @@ class ICTOutputSwitch(SwitchEntity):
         return self._is_on
 
     async def async_turn_on(self, **kwargs):
-        # Command 1 = On
+        # Command 1 = On (for Relays)
         await self._client.send_command_with_pin(0x02, 1, self._dev_id, None)
 
     async def async_turn_off(self, **kwargs):
-        # Command 2 = Off
+        # Command 2 = Off (for Relays)
         await self._client.send_command_with_pin(0x02, 2, self._dev_id, None)
