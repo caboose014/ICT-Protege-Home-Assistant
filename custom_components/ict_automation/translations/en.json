@@ -24,7 +24,7 @@
   "options": {
     "step": {
       "init": {
-        "title": "ICT Setup Menu",
+        "title": "ICT Protege Setup",
         "menu_options": {
           "scan_devices": "Scan for Devices",
           "configure_arming": "Configure Arming Modes",
@@ -171,11 +171,21 @@
       "no_devices": "No devices of this type have been configured yet."
     }
   },
-  "selector": {
+"selector": {
     "next_action": {
       "options": {
         "add_more": "Save & Add Another",
         "finish": "Save & Finish"
+      }
+    },
+    "sensor_type": {
+      "options": {
+        "motion": "Motion Sensor (PIR)",
+        "smoke": "Smoke Detector",
+        "glass": "Glass Break",
+        "door": "Door Contact (Reed)",
+        "window": "Window Contact (Reed)",
+        "tamper": "Tamper Switch"
       }
     }
   }

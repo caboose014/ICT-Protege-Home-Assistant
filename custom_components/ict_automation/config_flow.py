@@ -108,37 +108,80 @@ class ICTOptionsFlowHandler(config_entries.OptionsFlow):
         if not section: return {}
         return {int(k): str(v) for k, v in section.items()}
 
-    # --- ADD ITEMS (WIZARD) ---
+# --- ADD ITEMS (WIZARD) ---
     async def _add_item_step(self, user_input, type_name, storage_key, step_id):
         storage_dict = self._get_dict(storage_key)
         errors = {}
+        
         if user_input is not None:
             dev_id = int(user_input["dev_id"])
-            if dev_id in storage_dict: errors["base"] = "id_exists"
+            if dev_id in storage_dict: 
+                errors["base"] = "id_exists"
             else:
-                storage_dict[dev_id] = user_input["name"]
+                # Store data: If it's an INPUT, store a dictionary {name, type}
+                # If it's a Door/Area/Output, just store the Name string (legacy compatibility)
+                if storage_key == CONF_INPUTS:
+                    storage_dict[dev_id] = {
+                        "name": user_input["name"],
+                        "type": user_input.get("sensor_type", "motion")
+                    }
+                else:
+                    storage_dict[dev_id] = user_input["name"]
+                
                 self.options[storage_key] = storage_dict
+                
                 if user_input.get("next_action") == "add_more":
-                    return self.async_show_form(step_id=step_id, data_schema=self._get_schema_wizard(), description_placeholders={"type": type_name})
+                    # Loop back to add another
+                    return self.async_show_form(
+                        step_id=step_id, 
+                        data_schema=self._get_schema_wizard(storage_key), 
+                        description_placeholders={"type": type_name}
+                    )
                 else:
                     self._save_options()
                     return self.async_create_entry(title="", data=self.options)
-        return self.async_show_form(step_id=step_id, data_schema=self._get_schema_wizard(), errors=errors, description_placeholders={"type": type_name})
 
-    def _get_schema_wizard(self):
-        return vol.Schema({
+        return self.async_show_form(
+            step_id=step_id, 
+            data_schema=self._get_schema_wizard(storage_key), 
+            errors=errors, 
+            description_placeholders={"type": type_name}
+        )
+
+    def _get_schema_wizard(self, storage_key):
+        # Base Schema for Doors, Areas, Outputs
+        schema = {
             vol.Required("dev_id"): int, 
             vol.Required("name"): str, 
-            vol.Required("next_action", default="add_more"): selector.SelectSelector(
+        }
+
+        # EXTRA: If adding an INPUT, ask for the Type
+        if storage_key == CONF_INPUTS:
+            schema[vol.Required("sensor_type", default="motion")] = selector.SelectSelector(
                 selector.SelectSelectorConfig(
                     options=[
-                        {"value": "add_more", "label": "Save & Add Another"},
-                        {"value": "finish", "label": "Save & Finish"}
+                        {"value": "motion", "label": "Motion (PIR)"},
+                        {"value": "smoke", "label": "Smoke Detector"},
+                        {"value": "glass", "label": "Glass Break"},
+                        {"value": "door", "label": "Door Contact"},
+                        {"value": "window", "label": "Window Contact"},
+                        {"value": "tamper", "label": "Tamper"},
                     ],
-                    mode=selector.SelectSelectorMode.LIST
+                    mode=selector.SelectSelectorMode.DROPDOWN
                 )
             )
-        })
+
+        # "Next Action" is always last
+        schema[vol.Required("next_action", default="add_more")] = selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=[
+                    {"value": "add_more", "label": "Save & Add Another"},
+                    {"value": "finish", "label": "Save & Finish"}
+                ],
+                mode=selector.SelectSelectorMode.LIST
+            )
+        )
+        return vol.Schema(schema)
 
     async def async_step_add_door(self, user_input=None): return await self._add_item_step(user_input, "door", CONF_DOORS, "add_door")
     async def async_step_add_area(self, user_input=None): return await self._add_item_step(user_input, "area", CONF_AREAS, "add_area")

@@ -1,11 +1,12 @@
 {
   "domain": "ict_automation",
-  "name": "ICT Protege Automation",
-  "codeowners": [],
+  "name": "ICT Protege",
+  "codeowners": ["@caboose014"],
   "config_flow": true,
-  "documentation": "https://www.ict.co",
+  "documentation": "https://github.com/caboose014/ICT-Protege-Home-Assistant",
+  "issue_tracker": "https://github.com/caboose014/ICT-Protege-Home-Assistant/issues",
   "iot_class": "local_push",
-  "requirements": ["pyyaml"],
-  "version": "1.7.0",
-  "quality_scale": "silver"
+  "version": "1.0.0",
+  "requirements": [],
+  "dependencies": []
 }
