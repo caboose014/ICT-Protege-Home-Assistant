@@ -32,7 +32,6 @@ class ICTOptionsFlowHandler(config_entries.OptionsFlow):
         self.options = dict(config_entry.options)
         self.data = dict(config_entry.data)
         
-        # Ensure dicts exist
         self.options.setdefault(CONF_DOORS, {})
         self.options.setdefault(CONF_AREAS, {})
         self.options.setdefault(CONF_INPUTS, {})
@@ -57,7 +56,6 @@ class ICTOptionsFlowHandler(config_entries.OptionsFlow):
             "edit_device", "remove_device"
         ])
 
-    # --- RAW YAML EDITOR ---
     async def async_step_raw_editor(self, user_input=None):
         errors = {}
         if user_input is not None:
@@ -85,38 +83,21 @@ class ICTOptionsFlowHandler(config_entries.OptionsFlow):
         if not section: return {}
         return {int(k): str(v) for k, v in section.items()}
 
-    # --- ADD ITEMS (WIZARD STYLE) ---
     async def _add_item_step(self, user_input, type_name, storage_key, step_id):
         storage_dict = self._get_dict(storage_key)
         errors = {}
-        
         if user_input is not None:
             dev_id = int(user_input["dev_id"])
-            if dev_id in storage_dict: 
-                errors["base"] = "id_exists"
+            if dev_id in storage_dict: errors["base"] = "id_exists"
             else:
-                # 1. Update Memory
                 storage_dict[dev_id] = user_input["name"]
                 self.options[storage_key] = storage_dict
-                
-                # 2. Check which button was pressed
                 if user_input.get("next_action") == "add_more":
-                    return self.async_show_form(
-                        step_id=step_id, 
-                        data_schema=self._get_schema_wizard(), 
-                        description_placeholders={"type": type_name}
-                    )
+                    return self.async_show_form(step_id=step_id, data_schema=self._get_schema_wizard(), description_placeholders={"type": type_name})
                 else:
-                    # "Save & Finish" -> Write to disk and Reload
                     self._save_options()
                     return self.async_create_entry(title="", data=self.options)
-                    
-        return self.async_show_form(
-            step_id=step_id, 
-            data_schema=self._get_schema_wizard(), 
-            errors=errors, 
-            description_placeholders={"type": type_name}
-        )
+        return self.async_show_form(step_id=step_id, data_schema=self._get_schema_wizard(), errors=errors, description_placeholders={"type": type_name})
 
     def _get_schema_wizard(self):
         return vol.Schema({
@@ -128,8 +109,7 @@ class ICTOptionsFlowHandler(config_entries.OptionsFlow):
                         {"value": "add_more", "label": "Save & Add Another"},
                         {"value": "finish", "label": "Save & Finish"}
                     ],
-                    mode=selector.SelectSelectorMode.LIST,
-                    translation_key="next_action"
+                    mode=selector.SelectSelectorMode.LIST
                 )
             )
         })
@@ -140,7 +120,6 @@ class ICTOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_add_trouble(self, user_input=None): return await self._add_item_step(user_input, "trouble", CONF_TROUBLES, "add_trouble")
     async def async_step_add_output(self, user_input=None): return await self._add_item_step(user_input, "output", CONF_OUTPUTS, "add_output")
 
-    # --- REMOVE ITEMS (FIXED) ---
     async def async_step_remove_device(self, user_input=None):
         return self.async_show_menu(step_id="remove_device", menu_options=["remove_door", "remove_area", "remove_input", "remove_trouble", "remove_output", "back"])
 
@@ -150,50 +129,42 @@ class ICTOptionsFlowHandler(config_entries.OptionsFlow):
         if user_input:
             ent_reg = er.async_get(self.hass)
             
-            # Map storage key to prefixes
-            prefix_map = {
-                CONF_DOORS: "ict_door",
-                CONF_AREAS: "ict_area",
-                CONF_INPUTS: "ict_input",
-                CONF_TROUBLES: "ict_trouble",
-                CONF_OUTPUTS: "ict_output"
-            }
-            prefix = prefix_map.get(storage_key, "")
+            def get_uids_to_remove(dev_id, key):
+                uids = []
+                if key == CONF_DOORS:
+                    uids.append(f"ict_door_{dev_id}")
+                    uids.append(f"ict_door_contact_{dev_id}")
+                elif key == CONF_AREAS:
+                    uids.append(f"ict_area_{dev_id}")
+                elif key == CONF_INPUTS:
+                    uids.append(f"ict_input_{dev_id}")
+                    uids.append(f"ict_input_bypass_{dev_id}")
+                elif key == CONF_TROUBLES:
+                    uids.append(f"ict_trouble_{dev_id}")
+                    uids.append(f"ict_trouble_bypass_{dev_id}")
+                elif key == CONF_OUTPUTS:
+                    uids.append(f"ict_output_{dev_id}")
+                return uids
 
             for i in user_input["items"]: 
                 try: 
                     dev_id = int(i)
-                    # Remove from config
-                    if dev_id in storage_dict: 
-                        del storage_dict[dev_id]
+                    if dev_id in storage_dict: del storage_dict[dev_id]
                     
-                    # Remove entities from registry
-                    if prefix:
-                        base_uid = f"{prefix}_{dev_id}"
-                        suffixes = ["", "_contact", "_bypass"]
-                        
-                        # Find and remove all related entities
-                        for entry in list(ent_reg.entities.values()):
-                            if entry.config_entry_id == self._config_entry.entry_id:
-                                for s in suffixes:
-                                    if entry.unique_id == f"{base_uid}{s}":
-                                        ent_reg.async_remove(entry.entity_id)
-                except Exception as e:
-                    _LOGGER.error(f"Error removing device {i}: {e}")
-                    continue
+                    target_uids = get_uids_to_remove(dev_id, storage_key)
+                    for entry in list(ent_reg.entities.values()):
+                        if entry.config_entry_id == self._config_entry.entry_id:
+                            if entry.unique_id in target_uids:
+                                ent_reg.async_remove(entry.entity_id)
+                except: continue
             
             self.options[storage_key] = storage_dict
             self._save_options()
             return self.async_create_entry(title="", data=self.options)
 
         if not storage_dict: return self.async_abort(reason="no_devices")
-        
         options_list = [selector.SelectOptionDict(value=str(k), label=f"{k}: {v}") for k, v in storage_dict.items()]
-        schema = vol.Schema({
-            vol.Required("items"): selector.SelectSelector(
-                selector.SelectSelectorConfig(options=options_list, mode=selector.SelectSelectorMode.DROPDOWN, multiple=True)
-            )
-        })
+        schema = vol.Schema({vol.Required("items"): selector.SelectSelector(selector.SelectSelectorConfig(options=options_list, mode=selector.SelectSelectorMode.DROPDOWN, multiple=True))})
         return self.async_show_form(step_id=step_id, data_schema=schema)
 
     async def async_step_remove_door(self, user_input=None): return await self._remove_step(user_input, CONF_DOORS, "remove_door")
@@ -201,8 +172,7 @@ class ICTOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_remove_input(self, user_input=None): return await self._remove_step(user_input, CONF_INPUTS, "remove_input")
     async def async_step_remove_trouble(self, user_input=None): return await self._remove_step(user_input, CONF_TROUBLES, "remove_trouble")
     async def async_step_remove_output(self, user_input=None): return await self._remove_step(user_input, CONF_OUTPUTS, "remove_output")
-
-    # --- EDIT ---
+    
     async def async_step_edit_device(self, user_input=None):
         return self.async_show_menu(step_id="edit_device", menu_options=["edit_door", "edit_area", "edit_input", "edit_trouble", "edit_output", "back"])
 
@@ -231,7 +201,6 @@ class ICTOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_edit_trouble(self, user_input=None): return await self._edit_select_step(user_input, CONF_TROUBLES, "edit_trouble")
     async def async_step_edit_output(self, user_input=None): return await self._edit_select_step(user_input, CONF_OUTPUTS, "edit_output")
 
-    # --- SCANNER (UNCHANGED) ---
     async def async_step_scan_devices(self, user_input=None):
         return self.async_show_menu(step_id="scan_devices", menu_options=["scan_all", "scan_doors", "scan_areas", "scan_inputs", "scan_troubles", "scan_outputs", "back"])
 
@@ -262,26 +231,20 @@ class ICTOptionsFlowHandler(config_entries.OptionsFlow):
     async def _execute_scan_logic(self, limit_doors=0, limit_areas=0, limit_inputs=0, limit_outputs=0, limit_troubles=0):
         client = None
         is_temp = False
-        
         if DOMAIN in self.hass.data and self._config_entry.entry_id in self.hass.data[DOMAIN]:
             client = self.hass.data[DOMAIN][self._config_entry.entry_id]
-        
         if not client:
             client = ICTClient(self.data[CONF_HOST], self.data[CONF_PORT], self.data[CONF_PASSWORD])
-            if not await client.start_temp_connection(): 
-                return self.async_abort(reason="cannot_connect")
+            if not await client.start_temp_connection(): return self.async_abort(reason="cannot_connect")
             is_temp = True
-
         if not await client.authenticate():
             if is_temp: await client.stop()
             return self.async_abort(reason="invalid_auth")
-
         if limit_areas > 0: await self._run_scan(client, 2, limit_areas, self._get_dict(CONF_AREAS), "Area", CONF_AREAS)
         if limit_doors > 0: await self._run_scan(client, 1, limit_doors, self._get_dict(CONF_DOORS), "Door", CONF_DOORS)
         if limit_outputs > 0: await self._run_scan(client, 3, limit_outputs, self._get_dict(CONF_OUTPUTS), "Output", CONF_OUTPUTS)
         if limit_inputs > 0: await self._run_scan(client, 4, limit_inputs, self._get_dict(CONF_INPUTS), "Input", CONF_INPUTS)
         if limit_troubles > 0: await self._run_scan(client, 6, limit_troubles, self._get_dict(CONF_TROUBLES), "Trouble", CONF_TROUBLES)
-
         if is_temp: await client.stop()
         self._save_options()
         return self.async_create_entry(title="", data=self.options)
@@ -292,17 +255,14 @@ class ICTOptionsFlowHandler(config_entries.OptionsFlow):
             if i in storage: 
                 consecutive_fails = 0
                 continue
-            
             exists = await client.check_exists(group, i)
             await asyncio.sleep(0.1)
-            
             if exists:
                 storage[i] = f"{name_prefix} {i}"
                 consecutive_fails = 0
             else:
                 consecutive_fails += 1
                 if consecutive_fails >= 5: break
-        
         self.options[conf_key] = storage
 
     async def async_step_configure_connection(self, user_input=None):
