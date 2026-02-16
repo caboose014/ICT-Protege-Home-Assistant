@@ -26,25 +26,36 @@ class ICTInput(BinarySensorEntity):
             self._attr_unique_id = f"ict_trouble_{dev_id}"
             self._attr_device_class = BinarySensorDeviceClass.PROBLEM
             self._model = "Protege Trouble Input"
-            self._id_prefix = "trouble"
+            # Link to the Input Device instead of creating a new one
+            self._device_id_prefix = "input" 
         elif sensor_type == "door":
             self._attr_name = f"{name} Contact"
             self._attr_unique_id = f"ict_door_contact_{dev_id}"
             self._attr_device_class = BinarySensorDeviceClass.DOOR
             self._model = "Protege Door"
-            self._id_prefix = "door"
+            self._device_id_prefix = "door"
         else:
             self._attr_name = name
             self._attr_unique_id = f"ict_input_{dev_id}"
             self._attr_device_class = None
             self._model = "Protege Input"
-            self._id_prefix = "input"
+            self._device_id_prefix = "input"
             
         self._is_on = False
         self._attr_extra_state_attributes = {}
 
     @property
     def device_info(self) -> DeviceInfo:
+        # If it's a trouble, we map it to the "Input" device with the same ID
+        if self._type == "trouble":
+             return DeviceInfo(
+                identifiers={(DOMAIN, f"input_{self._dev_id}")},
+                name=self._attr_name.replace(" Trouble", ""), # Fallback name if input doesn't exist
+                manufacturer="Integrated Control Technology",
+                model="Protege Input",
+                via_device=(DOMAIN, "ict_controller"),
+            )
+        
         if self._type == "door":
             return DeviceInfo(
                 identifiers={(DOMAIN, f"door_{self._dev_id}")},
@@ -53,11 +64,13 @@ class ICTInput(BinarySensorEntity):
                 model="Protege Door",
                 via_device=(DOMAIN, "ict_controller"),
             )
+            
+        # Standard Input
         return DeviceInfo(
-            identifiers={(DOMAIN, f"{self._id_prefix}_{self._dev_id}")},
+            identifiers={(DOMAIN, f"input_{self._dev_id}")},
             name=self._attr_name,
             manufacturer="Integrated Control Technology",
-            model=self._model,
+            model="Protege Input",
             via_device=(DOMAIN, "ict_controller"),
         )
 
