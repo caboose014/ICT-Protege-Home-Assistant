@@ -23,7 +23,7 @@
   "options": {
     "step": {
       "init": {
-        "title": "ICT Automation Menu",
+        "title": "ICT Setup Menu",
         "menu_options": {
           "scan_devices": "Scan for Devices",
           "configure_arming": "Configure Arming Modes",
@@ -39,7 +39,7 @@
       },
       "configure_arming": {
         "title": "Arming Panel Options",
-        "description": "Select which arming modes should be visible on the Alarm Panel card in Home Assistant.",
+        "description": "Select which arming modes should be visible on the Alarm Panel card.",
         "data": {
           "enable_arm_away": "Show 'Arm Away'",
           "enable_arm_stay": "Show 'Arm Stay' (Home)",
@@ -143,6 +143,11 @@
       "scan_outputs": {
         "title": "Scan Outputs",
         "data": { "limit": "Limit" }
+      },
+      "raw_editor": {
+        "title": "Edit Config YAML",
+        "description": "Manually edit the configuration dictionary.",
+        "data": { "config_yaml": "Configuration YAML" }
       }
     },
     "error": {
