@@ -3,35 +3,26 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import callback
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
-from .const import DOMAIN, CONF_INPUTS, CONF_TROUBLES
+from .const import DOMAIN, CONF_INPUTS
 
 OPTIONS = ["Unbypassed", "Temporary Bypass", "Permanent Bypass"]
 
 async def async_setup_entry(hass, entry, async_add_entities):
     client = hass.data[DOMAIN][entry.entry_id]
     data_in = entry.options.get(CONF_INPUTS, {})
-    inputs = [ICTBypassSelect(client, int(k), v, False) for k, v in data_in.items()]
-    data_tr = entry.options.get(CONF_TROUBLES, {})
-    troubles = [ICTBypassSelect(client, int(k), v, True) for k, v in data_tr.items()]
-    async_add_entities(inputs + troubles)
+    # Only create input bypasses (Group 4)
+    inputs = [ICTBypassSelect(client, int(k), v) for k, v in data_in.items()]
+    async_add_entities(inputs)
 
 class ICTBypassSelect(SelectEntity):
-    def __init__(self, client, dev_id, name, is_trouble):
+    def __init__(self, client, dev_id, name):
         self._client = client
         self._dev_id = dev_id
         self._attr_name = f"{name} Bypass"
-        self._is_trouble = is_trouble
-        
-        if is_trouble:
-            self._attr_unique_id = f"ict_trouble_bypass_{dev_id}"
-            self._type_key = "trouble"
-            self._model = "Protege Trouble Input"
-            self._group = 0x06
-        else:
-            self._attr_unique_id = f"ict_input_bypass_{dev_id}"
-            self._type_key = "input"
-            self._model = "Protege Input"
-            self._group = 0x04
+        self._attr_unique_id = f"ict_input_bypass_{dev_id}"
+        self._type_key = "input"
+        self._model = "Protege Input"
+        self._group = 0x04
             
         self._attr_current_option = OPTIONS[0]
         self._attr_options = OPTIONS
@@ -44,16 +35,6 @@ class ICTBypassSelect(SelectEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
-        # Map Troubles to the Input device
-        if self._is_trouble:
-             return DeviceInfo(
-                identifiers={(DOMAIN, f"input_{self._dev_id}")},
-                name=self._attr_name.replace(" Bypass", ""), 
-                manufacturer="Integrated Control Technology",
-                model="Protege Input",
-                via_device=(DOMAIN, "ict_controller"),
-            )
-
         return DeviceInfo(
             identifiers={(DOMAIN, f"input_{self._dev_id}")},
             name=self._attr_name.replace(" Bypass", ""),
@@ -67,7 +48,7 @@ class ICTBypassSelect(SelectEntity):
 
     @callback
     def _handle_update(self, update):
-        if update["type"] == self._type_key and update["id"] == self._dev_id:
+        if update["type"] == "input" and update["id"] == self._dev_id:
             if "bypass_mode" in update:
                 self._attr_current_option = update["bypass_mode"]
                 self.async_write_ha_state()
@@ -76,6 +57,6 @@ class ICTBypassSelect(SelectEntity):
         sub_cmd = 0x00
         if option == "Temporary Bypass": sub_cmd = 0x01
         elif option == "Permanent Bypass": sub_cmd = 0x02
-        await self._client.send_command(self._group, sub_cmd, self._dev_id)
+        await self._client.send_command(0x04, sub_cmd, self._dev_id)
         self._attr_current_option = option
         self.async_write_ha_state()
