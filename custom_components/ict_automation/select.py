@@ -25,13 +25,11 @@ class ICTBypassSelect(SelectEntity):
         if is_trouble:
             self._attr_unique_id = f"ict_trouble_bypass_{dev_id}"
             self._type_key = "trouble"
-            self._id_prefix = "trouble"
             self._model = "Protege Trouble Input"
             self._group = 0x06
         else:
             self._attr_unique_id = f"ict_input_bypass_{dev_id}"
             self._type_key = "input"
-            self._id_prefix = "input"
             self._model = "Protege Input"
             self._group = 0x04
             
@@ -46,11 +44,21 @@ class ICTBypassSelect(SelectEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
+        # Map Troubles to the Input device
+        if self._is_trouble:
+             return DeviceInfo(
+                identifiers={(DOMAIN, f"input_{self._dev_id}")},
+                name=self._attr_name.replace(" Bypass", ""), 
+                manufacturer="Integrated Control Technology",
+                model="Protege Input",
+                via_device=(DOMAIN, "ict_controller"),
+            )
+
         return DeviceInfo(
-            identifiers={(DOMAIN, f"{self._id_prefix}_{self._dev_id}")},
+            identifiers={(DOMAIN, f"input_{self._dev_id}")},
             name=self._attr_name.replace(" Bypass", ""),
             manufacturer="Integrated Control Technology",
-            model=self._model,
+            model="Protege Input",
             via_device=(DOMAIN, "ict_controller"),
         )
 
