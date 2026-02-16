@@ -3,17 +3,26 @@ from homeassistant.components.binary_sensor import BinarySensorEntity, BinarySen
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import callback
 from homeassistant.helpers.entity import DeviceInfo
-from .const import DOMAIN, CONF_INPUTS, CONF_TROUBLES, CONF_DOORS
+from .const import DOMAIN, CONF_INPUTS, CONF_DOORS
 
 async def async_setup_entry(hass, entry, async_add_entities):
     client = hass.data[DOMAIN][entry.entry_id]
+    
+    # Process Inputs
     data_in = entry.options.get(CONF_INPUTS, {})
-    inputs = [ICTInput(client, int(k), v, "input") for k, v in data_in.items()]
-    data_tr = entry.options.get(CONF_TROUBLES, {})
-    troubles = [ICTInput(client, int(k), v, "trouble") for k, v in data_tr.items()]
+    entities = []
+    for k, v in data_in.items():
+        # Create standard Input Entity
+        entities.append(ICTInput(client, int(k), v, "input"))
+        # Automatically create Trouble Entity linked to same ID
+        entities.append(ICTInput(client, int(k), v, "trouble"))
+        
+    # Process Doors
     data_dr = entry.options.get(CONF_DOORS, {})
-    doors = [ICTInput(client, int(k), v, "door") for k, v in data_dr.items()]
-    async_add_entities(inputs + troubles + doors)
+    for k, v in data_dr.items():
+        entities.append(ICTInput(client, int(k), v, "door"))
+        
+    async_add_entities(entities)
 
 class ICTInput(BinarySensorEntity):
     def __init__(self, client, dev_id, name, sensor_type):
@@ -25,8 +34,8 @@ class ICTInput(BinarySensorEntity):
             self._attr_name = f"{name} Trouble"
             self._attr_unique_id = f"ict_trouble_{dev_id}"
             self._attr_device_class = BinarySensorDeviceClass.PROBLEM
-            self._model = "Protege Trouble Input"
-            # Link to the Input Device instead of creating a new one
+            self._model = "Protege Input"
+            # Identifiers match the Input Device ID
             self._device_id_prefix = "input" 
         elif sensor_type == "door":
             self._attr_name = f"{name} Contact"
@@ -46,31 +55,11 @@ class ICTInput(BinarySensorEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
-        # If it's a trouble, we map it to the "Input" device with the same ID
-        if self._type == "trouble":
-             return DeviceInfo(
-                identifiers={(DOMAIN, f"input_{self._dev_id}")},
-                name=self._attr_name.replace(" Trouble", ""), # Fallback name if input doesn't exist
-                manufacturer="Integrated Control Technology",
-                model="Protege Input",
-                via_device=(DOMAIN, "ict_controller"),
-            )
-        
-        if self._type == "door":
-            return DeviceInfo(
-                identifiers={(DOMAIN, f"door_{self._dev_id}")},
-                name=self._attr_name.replace(" Contact", ""),
-                manufacturer="Integrated Control Technology",
-                model="Protege Door",
-                via_device=(DOMAIN, "ict_controller"),
-            )
-            
-        # Standard Input
         return DeviceInfo(
-            identifiers={(DOMAIN, f"input_{self._dev_id}")},
-            name=self._attr_name,
+            identifiers={(DOMAIN, f"{self._device_id_prefix}_{self._dev_id}")},
+            name=self._attr_name.replace(" Trouble", "").replace(" Contact", ""),
             manufacturer="Integrated Control Technology",
-            model="Protege Input",
+            model=self._model,
             via_device=(DOMAIN, "ict_controller"),
         )
 
