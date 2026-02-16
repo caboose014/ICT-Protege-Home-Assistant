@@ -64,8 +64,7 @@ class ICTArea(AlarmControlPanelEntity):
             identifiers={(DOMAIN, f"area_{self._area_id}")},
             name=self._attr_name,
             manufacturer="Integrated Control Technology",
-            model="Protege Area",
-            via_device=(DOMAIN, "ict_controller"),
+            model="Protege Area"
         )
 
     async def async_added_to_hass(self):
