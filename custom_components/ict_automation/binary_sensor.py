@@ -111,4 +111,32 @@ class ICTInput(BinarySensorEntity):
             name=name,
             manufacturer="Integrated Control Technology",
             model=self._model,
-            # Removed via_device to prevent "Invalid Device
+            # Removed via_device to prevent "Invalid Device" errors
+        )
+
+    async def async_added_to_hass(self):
+        self._client.register_callback(self._handle_update)
+
+    def _handle_update(self, update):
+        # Door Contacts get updates from "door" events
+        if self._type == "door" and update["type"] == "door" and update["id"] == self._dev_id:
+            self._attr_is_on = update["open"]
+            self.async_write_ha_state()
+            
+        # Trouble Sensors get updates from "input" events (trouble flag)
+        elif self._type == "trouble" and update["type"] == "input" and update["id"] == self._dev_id:
+            self._attr_is_on = update["trouble"]
+            self.async_write_ha_state()
+            
+        # Standard Inputs get updates from "input" events (open flag)
+        elif self._type not in ["door", "trouble"] and update["type"] == "input" and update["id"] == self._dev_id:
+            self._attr_is_on = update["open"]
+            self.async_write_ha_state()
+
+    @property
+    def icon(self):
+        # Optional overrides
+        if self._type == "smoke": return "mdi:smoke-detector-alert" if self.is_on else "mdi:smoke-detector"
+        if self._type == "window": return "mdi:window-open" if self.is_on else "mdi:window-closed"
+        if self._type == "tamper": return "mdi:alert-box" if self.is_on else "mdi:check-circle-outline"
+        return None
