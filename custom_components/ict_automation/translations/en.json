@@ -37,6 +37,17 @@
           "raw_editor": "Advanced: Edit YAML Config"
         }
       },
+      "scan_devices": {
+        "title": "Select Scan Type",
+        "menu_options": {
+          "scan_all": "Scan All Types",
+          "scan_doors": "Scan Doors Only",
+          "scan_areas": "Scan Areas Only",
+          "scan_inputs": "Scan Inputs Only",
+          "scan_outputs": "Scan Outputs Only",
+          "back": "Back to Main Menu"
+        }
+      },
       "configure_arming": {
         "title": "Arming Panel Options",
         "description": "Select which arming modes should be visible on the Alarm Panel card.",
@@ -152,9 +163,11 @@
     },
     "error": {
       "id_exists": "A device with this ID already exists.",
-      "no_devices": "No devices of this type found to edit/remove.",
       "cannot_connect": "Could not connect to controller.",
       "invalid_auth": "Service PIN rejected."
+    },
+    "abort": {
+      "no_devices": "No devices of this type have been configured yet."
     }
   },
   "selector": {
