@@ -17,7 +17,8 @@
       "unknown": "Unexpected error."
     },
     "abort": {
-      "already_configured": "Device is already configured."
+      "already_configured": "Device is already configured.",
+      "no_devices": "No devices of this type have been configured yet."
     }
   },
   "options": {
