@@ -16,6 +16,10 @@ from .const import (
 from .ict_library import ICTClient
 
 _LOGGER = logging.getLogger(__name__)
+<<<<<<< Updated upstream
+=======
+PLATFORMS = ["lock", "button", "binary_sensor", "switch", "alarm_control_panel"]
+>>>>>>> Stashed changes
 
 
 PLATFORMS: list[Platform] = [
@@ -66,6 +70,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # 1. Build list of valid Entity IDs
     for d in door_ids:
         valid_unique_ids.add(f"ict_door_{d}")
+        valid_unique_ids.add(f"ict_door_release_{d}")
         valid_unique_ids.add(f"ict_door_contact_{d}")
 
     for a in area_ids:
@@ -73,8 +78,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     for i in input_ids:
         valid_unique_ids.add(f"ict_input_{i}")
+<<<<<<< Updated upstream
         valid_unique_ids.add(f"ict_input_bypass_{i}")
         valid_unique_ids.add(f"ict_trouble_{i}")
+=======
+        valid_unique_ids.add(f"ict_input_bypass_switch_{i}")
+        valid_unique_ids.add(f"ict_trouble_{i}") 
+>>>>>>> Stashed changes
 
     for o in output_ids:
         valid_unique_ids.add(f"ict_output_{o}")

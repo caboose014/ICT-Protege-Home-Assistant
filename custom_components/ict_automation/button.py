@@ -1,3 +1,4 @@
+<<<<<<< Updated upstream
 import logging
 from homeassistant.components.button import ButtonEntity
 from homeassistant.helpers.entity import DeviceInfo
@@ -44,3 +45,37 @@ class ICTDoorButton(ButtonEntity):
         # SEND COMMAND 3: Momentary Unlock
         # This triggers the specific 'Entry' or 'Unlock Momentary' function in Protege
         await self._client.send_command_with_pin(0x01, CMD_DOOR_UNLOCK_MOMENTARY, self._door_id, None)
+=======
+from homeassistant.components.button import ButtonEntity
+from homeassistant.helpers.entity import DeviceInfo
+
+from .const import DOMAIN, CONF_DOORS
+
+
+async def async_setup_entry(hass, entry, async_add_entities):
+    client = hass.data[DOMAIN][entry.entry_id]
+    data = entry.options.get(CONF_DOORS, {})
+    async_add_entities(ICTDoorReleaseButton(client, int(k), v) for k, v in data.items())
+
+
+class ICTDoorReleaseButton(ButtonEntity):
+    def __init__(self, client, door_id, name):
+        self._client = client
+        self._door_id = door_id
+        self._attr_name = f"{name} Momentary Unlock"
+        self._attr_unique_id = f"ict_door_release_{door_id}"
+        self._attr_icon = "mdi:door-open"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"door_{self._door_id}")},
+            name=self._attr_name.replace(" Momentary Unlock", ""),
+            manufacturer="Integrated Control Technology",
+            model="Protege Door",
+            via_device=(DOMAIN, "ict_controller"),
+        )
+
+    async def async_press(self) -> None:
+        await self._client.release_door(self._door_id)
+>>>>>>> Stashed changes

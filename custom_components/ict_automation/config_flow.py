@@ -199,10 +199,10 @@ class ICTOptionsFlowHandler(config_entries.OptionsFlow):
             def get_uids_to_remove(dev_id, key):
                 uids = []
                 if key == CONF_DOORS:
-                    uids.append(f"ict_door_{dev_id}"); uids.append(f"ict_door_contact_{dev_id}")
+                    uids.append(f"ict_door_{dev_id}"); uids.append(f"ict_door_release_{dev_id}"); uids.append(f"ict_door_contact_{dev_id}")
                 elif key == CONF_AREAS: uids.append(f"ict_area_{dev_id}")
                 elif key == CONF_INPUTS:
-                    uids.append(f"ict_input_{dev_id}"); uids.append(f"ict_input_bypass_{dev_id}"); uids.append(f"ict_trouble_{dev_id}")
+                    uids.append(f"ict_input_{dev_id}"); uids.append(f"ict_input_bypass_{dev_id}"); uids.append(f"ict_input_bypass_switch_{dev_id}"); uids.append(f"ict_trouble_{dev_id}")
                 elif key == CONF_OUTPUTS: uids.append(f"ict_output_{dev_id}")
                 return uids
 

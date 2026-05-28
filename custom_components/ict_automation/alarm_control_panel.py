@@ -2,17 +2,9 @@ import logging
 from homeassistant.components.alarm_control_panel import (
     AlarmControlPanelEntity,
     AlarmControlPanelEntityFeature,
+    AlarmControlPanelState,
     CodeFormat,
 )
-
-# FIXED: Constants defined locally to prevent ImportError on HA 2025.1+
-# These were removed from homeassistant.const
-STATE_ALARM_DISARMED = "disarmed"
-STATE_ALARM_ARMED_HOME = "armed_home"
-STATE_ALARM_ARMED_AWAY = "armed_away"
-STATE_ALARM_ARMED_NIGHT = "armed_night"
-STATE_ALARM_TRIGGERED = "triggered"
-STATE_ALARM_ARMING = "arming"
 
 from homeassistant.core import callback
 from homeassistant.helpers.entity import DeviceInfo
@@ -73,35 +65,54 @@ class ICTArea(AlarmControlPanelEntity):
     @callback
     def _handle_update(self, update):
         if update["type"] == "area" and update["id"] == self._area_id:
-            if update["alarm"]: self._state = STATE_ALARM_TRIGGERED
-            elif update["armed"]: self._state = STATE_ALARM_ARMED_AWAY
-            else: self._state = STATE_ALARM_DISARMED
+            area_state = update.get("state")
+            if update["alarm"]:
+                self._state = AlarmControlPanelState.TRIGGERED
+            elif area_state == 0x81:
+                self._state = AlarmControlPanelState.ARMING
+            elif area_state in (0x82, 0x83, 0x84):
+                self._state = AlarmControlPanelState.PENDING
+            elif update.get("partial_armed"):
+                self._state = AlarmControlPanelState.ARMED_HOME
+            elif update.get("instant_armed"):
+                self._state = AlarmControlPanelState.ARMED_NIGHT
+            elif update["armed"]:
+                self._state = AlarmControlPanelState.ARMED_AWAY
+            else:
+                self._state = AlarmControlPanelState.DISARMED
+            self._attr_extra_state_attributes = {
+                "ict_status": update.get("status"),
+                "force_armed": update.get("force_armed"),
+                "instant_armed": update.get("instant_armed"),
+                "partial_armed": update.get("partial_armed"),
+                "alarm_memory": update.get("alarm_memory"),
+                "siren": update.get("siren"),
+                "tamper_state": update.get("tamper_state"),
+            }
             self.async_write_ha_state()
 
     @property
     def state(self): return self._state
 
+    @property
+    def alarm_state(self): return self._state
+
     async def async_alarm_disarm(self, code=None) -> None:
         if not code: return
-        await self._client.send_command_with_pin(0x02, 0x02, self._area_id, code)
+        await self._client.disarm_area(self._area_id, code)
 
     async def async_alarm_arm_away(self, code=None) -> None:
         if not code: return
-        # Standard Force Arm
-        await self._client.send_command_with_pin(0x02, 0x01, self._area_id, code)
+        await self._client.arm_area_away(self._area_id, code)
 
     async def async_alarm_arm_home(self, code=None) -> None:
         if not code: return
-        # Stay Arm (Protege "Stay" Mode)
-        await self._client.send_command_with_pin(0x02, 0x03, self._area_id, code)
+        await self._client.arm_area_stay(self._area_id, code)
 
     async def async_alarm_arm_night(self, code=None) -> None:
         if not code: return
-        # Night Arm (Protege "Instant" Mode usually maps well here, or Sleep)
-        # Using 0x04 (Instant/Sleep) based on standard automation protocols
-        await self._client.send_command_with_pin(0x02, 0x04, self._area_id, code)
+        await self._client.arm_area_instant(self._area_id, code)
         
     async def async_alarm_arm_vacation(self, code=None) -> None:
-        # We use this for "Force Arm" or specific bypass modes if enabled
         if not code: return
-        await self._client.send_command_with_pin(0x02, 0x01, self._area_id, code)
+        await self._client.force_arm_area(self._area_id, code)

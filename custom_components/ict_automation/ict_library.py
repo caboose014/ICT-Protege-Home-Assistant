@@ -3,11 +3,57 @@ import logging
 import struct
 import socket
 
+from .protocol import (
+    AREA_ARM_FORCE,
+    AREA_ARM_INSTANT,
+    AREA_ARM_NORMAL,
+    AREA_ARM_STAY,
+    AREA_DISARM_ALL,
+    DOOR_LOCK,
+    DOOR_UNLOCK_LATCHED,
+    DOOR_UNLOCK_MOMENTARY,
+    GROUP_AREA,
+    GROUP_DOOR,
+    GROUP_INPUT,
+    GROUP_OUTPUT,
+    INPUT_BYPASS_PERMANENT,
+    INPUT_BYPASS_REMOVE,
+    INPUT_BYPASS_TEMPORARY,
+    OUTPUT_OFF,
+    OUTPUT_ON,
+    PKT_TYPE_DATA,
+    PKT_TYPE_SYSTEM,
+    SUB_STATUS,
+    SYSTEM_ACK,
+    SYSTEM_NACK,
+    build_command_packet,
+    iter_data_blocks,
+    parse_packet,
+    ICTProtocolError,
+)
+
 _LOGGER = logging.getLogger(__name__)
 
-PKT_TYPE_COMMAND = 0x00
-PKT_TYPE_DATA = 0x01
-PKT_TYPE_SYSTEM = 0xC0
+AREA_STATE_TEXT = {
+    0x00: "Disarmed",
+    0x01: "Inputs open waiting for user input",
+    0x02: "Trouble condition waiting for user input",
+    0x03: "Bypass error waiting for user input",
+    0x04: "Bypass warning waiting for user input",
+    0x05: "User count not zero waiting for user input",
+    0x80: "Armed",
+    0x81: "Exit delay",
+    0x82: "Entry delay",
+    0x83: "Disarm delay",
+    0x84: "Code delay",
+}
+
+INPUT_STATE_TEXT = {
+    0x00: "Closed",
+    0x01: "Open",
+    0x02: "Short Circuit",
+    0x03: "Tamper",
+}
 
 class ICTClient:
     def __init__(self, host, port, password):
@@ -22,6 +68,7 @@ class ICTClient:
         self._callbacks = []
         self._shutdown = False
         self._scan_response = None
+        self._scan_pending = False
         self._scan_event = asyncio.Event()
         self._login_event = asyncio.Event()
         self._login_success = False
@@ -121,19 +168,59 @@ class ICTClient:
     async def check_exists(self, group, idx):
         if not self._connected: return False
         self._scan_response = None
+        self._scan_pending = True
         self._scan_event.clear()
         idx_bytes = struct.pack('<I', idx)
-        await self._send_raw(group, 0x80, idx_bytes)
+        await self._send_raw(group, SUB_STATUS, idx_bytes)
         try:
             await asyncio.wait_for(self._scan_event.wait(), timeout=2.0)
             return self._scan_response
         except asyncio.TimeoutError: return False 
+        finally:
+            self._scan_pending = False
 
     async def send_command(self, group, sub, index_id):
-        await self._execute_transient(group, sub, index_id, self.service_pin)
+        return await self._execute_transient(group, sub, index_id, self.service_pin)
 
     async def send_command_with_pin(self, group, sub, index_id, pin_code):
         return await self._execute_transient(group, sub, index_id, pin_code)
+
+    async def lock_door(self, door_id):
+        return await self.send_command(GROUP_DOOR, DOOR_LOCK, door_id)
+
+    async def release_door(self, door_id):
+        return await self.send_command(GROUP_DOOR, DOOR_UNLOCK_MOMENTARY, door_id)
+
+    async def latch_unlock_door(self, door_id):
+        return await self.send_command(GROUP_DOOR, DOOR_UNLOCK_LATCHED, door_id)
+
+    async def disarm_area(self, area_id, pin_code):
+        return await self.send_command_with_pin(GROUP_AREA, AREA_DISARM_ALL, area_id, pin_code)
+
+    async def arm_area_away(self, area_id, pin_code):
+        return await self.send_command_with_pin(GROUP_AREA, AREA_ARM_NORMAL, area_id, pin_code)
+
+    async def force_arm_area(self, area_id, pin_code):
+        return await self.send_command_with_pin(GROUP_AREA, AREA_ARM_FORCE, area_id, pin_code)
+
+    async def arm_area_stay(self, area_id, pin_code):
+        return await self.send_command_with_pin(GROUP_AREA, AREA_ARM_STAY, area_id, pin_code)
+
+    async def arm_area_instant(self, area_id, pin_code):
+        return await self.send_command_with_pin(GROUP_AREA, AREA_ARM_INSTANT, area_id, pin_code)
+
+    async def turn_output_on(self, output_id):
+        return await self.send_command(GROUP_OUTPUT, OUTPUT_ON, output_id)
+
+    async def turn_output_off(self, output_id):
+        return await self.send_command(GROUP_OUTPUT, OUTPUT_OFF, output_id)
+
+    async def bypass_input(self, input_id, permanent=False):
+        sub = INPUT_BYPASS_PERMANENT if permanent else INPUT_BYPASS_TEMPORARY
+        return await self.send_command(GROUP_INPUT, sub, input_id)
+
+    async def unbypass_input(self, input_id):
+        return await self.send_command(GROUP_INPUT, INPUT_BYPASS_REMOVE, input_id)
 
     async def _execute_transient(self, group, sub, index_id, pin):
         async with self._lock:
@@ -148,7 +235,7 @@ class ICTClient:
             
             await self._update_monitoring()
             await asyncio.sleep(0.2)
-            await self._send_raw(group, 0x80, struct.pack('<I', index_id))
+            await self._send_raw(group, SUB_STATUS, struct.pack('<I', index_id))
             
             return True
 
@@ -165,11 +252,7 @@ class ICTClient:
 
     async def _send_raw(self, group, sub, data):
         if not self._writer: return
-        payload = bytearray([group, sub]) + data
-        wrapper = bytearray([0x00, 0x00]) + payload 
-        length = 5 + len(wrapper)
-        full = bytearray([0x49, 0x43]) + struct.pack('<H', length) + wrapper
-        full.append(sum(full) % 256)
+        full = build_command_packet(group, sub, data)
         try:
             self._writer.write(full)
             await self._writer.drain()
@@ -190,23 +273,24 @@ class ICTClient:
                         continue
                     length = struct.unpack('<H', buffer[2:4])[0]
                     if len(buffer) < length: break
-                    packet = buffer[:length]
+                    raw_packet = bytes(buffer[:length])
                     del buffer[:length]
-                    self._handle_packet(packet)
+                    self._handle_packet(raw_packet)
             except: 
                 await self.disconnect()
                 break
 
-    def _handle_packet(self, packet):
+    def _handle_packet(self, raw_packet):
         try:
-            pkt_type = packet[4]
+            packet = parse_packet(raw_packet)
+            pkt_type = packet.packet_type
             if not self._login_event.is_set():
-                if pkt_type == PKT_TYPE_SYSTEM and len(packet) >= 8:
-                    if packet[6] == 0xFF and packet[7] == 0xFF: 
+                if pkt_type == PKT_TYPE_SYSTEM:
+                    if packet.data.startswith(SYSTEM_NACK): 
                         self._login_success = False
                         self._login_event.set()
                         return
-                    if packet[6] == 0xFF and packet[7] == 0x00:
+                    if packet.data.startswith(SYSTEM_ACK):
                         self._login_success = True
                         self._login_event.set()
                         return
@@ -214,9 +298,9 @@ class ICTClient:
                     self._login_success = True
                     self._login_event.set()
 
-            if self._scan_event and not self._scan_event.is_set():
-                if pkt_type == PKT_TYPE_SYSTEM and len(packet) >= 8: 
-                     if packet[6] == 0xFF and packet[7] == 0xFF:
+            if self._scan_pending and not self._scan_event.is_set():
+                if pkt_type == PKT_TYPE_SYSTEM: 
+                     if packet.data.startswith(SYSTEM_NACK):
                          self._scan_response = False
                          self._scan_event.set()
                          return
@@ -226,20 +310,14 @@ class ICTClient:
                      return
 
             if pkt_type == PKT_TYPE_DATA: 
-                data_section = packet[6:-1]
-                self._parse_data_stream(data_section)
+                self._parse_data_stream(packet.data)
+        except ICTProtocolError as err:
+            _LOGGER.debug("Ignoring invalid ICT packet: %s", err)
         except Exception: pass
 
     def _parse_data_stream(self, data):
-        i = 0
-        while i < len(data) - 3:
-            type_l = data[i]
-            type_h = data[i+1]
-            length = data[i+2]
-            body = data[i+3 : i+3+length]
-            if type_l == 0xFF and type_h == 0xFF: break
-            self._notify_update(type_l, type_h, body)
-            i += 3 + length
+        for block in iter_data_blocks(data):
+            self._notify_update(block.type_low, block.type_high, block.body)
 
     def _notify_update(self, type_l, type_h, body):
         update = {}
@@ -248,18 +326,60 @@ class ICTClient:
             if type_h == 0x01: 
                 is_locked = (body[4] == 0)
                 is_open = (body[5] > 0)
-                update = {"type": "door", "id": idx, "locked": is_locked, "open": is_open}
-            elif type_h == 0x02: update = {"type": "area", "id": idx, "armed": (body[4] >= 0x80), "alarm": ((body[6] & 0x01) > 0)}
+                update = {
+                    "type": "door",
+                    "id": idx,
+                    "locked": is_locked,
+                    "open": is_open,
+                    "lock_state": body[4],
+                    "door_state": body[5],
+                }
+            elif type_h == 0x02:
+                area_state = body[4]
+                tamper_state = body[5]
+                flags = body[6]
+                update = {
+                    "type": "area",
+                    "id": idx,
+                    "armed": (area_state >= 0x80),
+                    "alarm": ((flags & 0x01) > 0),
+                    "state": area_state,
+                    "status": AREA_STATE_TEXT.get(area_state, f"Unknown ({area_state})"),
+                    "tamper_state": tamper_state,
+                    "siren": ((flags & 0x02) > 0),
+                    "alarm_memory": ((flags & 0x04) > 0),
+                    "remote_armed": ((flags & 0x08) > 0),
+                    "force_armed": ((flags & 0x10) > 0),
+                    "instant_armed": ((flags & 0x20) > 0),
+                    "partial_armed": ((flags & 0x40) > 0),
+                }
             elif type_h == 0x03: update = {"type": "output", "id": idx, "on": (body[12] > 0)}
             elif type_h == 0x04: 
                 state_val = body[12]
                 bypassed = (body[13] & 0x01) > 0
-                state_desc = "Closed"
-                if state_val == 1: state_desc = "Open"
-                elif state_val == 2: state_desc = "Short Circuit"
-                elif state_val == 3: state_desc = "Tamper"
-                update = {"type": "input", "id": idx, "on": (state_val > 0), "status": state_desc, "bypassed": bypassed}
-            elif type_h == 0x06: update = {"type": "trouble", "id": idx, "on": (body[16] > 0)}
+                bypass_latched = (body[13] & 0x02) > 0
+                update = {
+                    "type": "input",
+                    "id": idx,
+                    "on": (state_val > 0),
+                    "status": INPUT_STATE_TEXT.get(state_val, f"Unknown ({state_val})"),
+                    "state": state_val,
+                    "bypassed": bypassed,
+                    "bypass_latched": bypass_latched,
+                }
+            elif type_h == 0x06:
+                state_val = body[12]
+                bypassed = (body[13] & 0x01) > 0
+                bypass_latched = (body[13] & 0x02) > 0
+                update = {
+                    "type": "trouble",
+                    "id": idx,
+                    "on": (state_val > 0),
+                    "status": INPUT_STATE_TEXT.get(state_val, f"Unknown ({state_val})"),
+                    "state": state_val,
+                    "bypassed": bypassed,
+                    "bypass_latched": bypass_latched,
+                }
             if update:
                 for cb in self._callbacks: cb(update)
         except: pass

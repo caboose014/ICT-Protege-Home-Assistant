@@ -43,6 +43,7 @@ class ICTDoorLock(LockEntity):
     @property
     def is_locked(self): return self._is_locked
 
+<<<<<<< Updated upstream
     async def async_lock(self, **kwargs) -> None:
         code = kwargs.get("code", None)
         await self._client.send_command_with_pin(0x01, CMD_DOOR_LOCK, self._door_id, code)
@@ -50,3 +51,10 @@ class ICTDoorLock(LockEntity):
     async def async_unlock(self, **kwargs) -> None:
         code = kwargs.get("code", None)
         await self._client.send_command_with_pin(0x01, CMD_DOOR_UNLOCK_LATCH, self._door_id, code)
+=======
+    async def async_lock(self, **kwargs):
+        await self._client.lock_door(self._door_id)
+
+    async def async_unlock(self, **kwargs):
+        await self._client.latch_unlock_door(self._door_id)
+>>>>>>> Stashed changes
