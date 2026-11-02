@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import struct
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
@@ -153,6 +154,10 @@ class ProtegeConnection:
             self._shutdown()
 
     def _dispatch(self, packet: p.ICTPacket) -> None:
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "RX %s:%s type=%#04x %s", self.host, self.port, packet.packet_type, packet.data.hex(" ")
+            )
         consumed = False
         for waiter in list(self._waiters):
             if not waiter.future.done() and waiter.accept(packet):
@@ -172,6 +177,8 @@ class ProtegeConnection:
     async def write(self, raw: bytes) -> None:
         if self._writer is None:
             raise CannotConnect("Not connected")
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("TX %s:%s %s", self.host, self.port, raw.hex(" "))
         try:
             self._writer.write(raw)
             await self._writer.drain()
@@ -226,6 +233,16 @@ class ProtegeConnection:
         for future in futures:
             results.append(await self._await(future, timeout))
         return results
+
+
+def _command_target(raw: bytes) -> tuple[RecordType, int] | None:
+    """Return the record a record command packet addresses."""
+    if len(raw) < 12 or raw[4] != p.PKT_TYPE_COMMAND:
+        return None
+    record_type = RecordType.from_group(raw[6])
+    if record_type is None:
+        return None
+    return record_type, struct.unpack("<I", raw[8:12])[0]
 
 
 def _is_system(packet: p.ICTPacket) -> bool:
@@ -293,6 +310,7 @@ class ProtegeClient:
         self._monitored: list[Record] = []
         self._polled: list[Record] = []
         self._tasks: list[asyncio.Task] = []
+        self._background: set[asyncio.Task] = set()
         self._stopping = False
         self._available = False
 
@@ -393,6 +411,8 @@ class ProtegeClient:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
         self._tasks = []
+        for task in list(self._background):
+            task.cancel()
         await self._conn.close()
         self._set_available(False)
 
@@ -445,11 +465,8 @@ class ProtegeClient:
             await asyncio.sleep(self.poll_interval)
             if not self._conn.connected:
                 continue
-            for record in self._polled:
-                try:
-                    await self.request_status(record.record_type, record.index)
-                except ProtegeError:
-                    break
+            # Everything is re-read periodically, not just records beyond the monitoring limit.
+            await self.refresh_all()
 
     async def _restore_monitoring(self) -> None:
         """(Re)register monitoring for all records; the panel resets it on login/logout."""
@@ -573,8 +590,46 @@ class ProtegeClient:
         except ProtegeError as err:
             _LOGGER.warning("Could not restore monitoring after command: %s", err)
             await self._conn.close()
+        else:
+            # Not every panel honours the "force update" monitoring flag, and changes made
+            # while logged in are not pushed. Read the commanded record back explicitly, and
+            # again shortly after for doors and outputs that change state on a timer.
+            target = _command_target(raw)
+            if target is not None:
+                await self._refresh(*target)
+                self._spawn(self._refresh_later(target, (1.5, 6.0)))
+            self._spawn(self.refresh_all())
         if error is not None:
             raise error
+
+    def _spawn(self, coro) -> None:
+        task = asyncio.create_task(coro)
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+
+    async def _refresh(self, record_type: RecordType, index: int) -> None:
+        with contextlib.suppress(ProtegeError):
+            await self.request_status(record_type, index)
+
+    async def _refresh_later(self, target: tuple[RecordType, int], delays: tuple[float, ...]) -> None:
+        elapsed = 0.0
+        for delay in delays:
+            await asyncio.sleep(delay - elapsed)
+            elapsed = delay
+            if self._stopping or not self._conn.connected:
+                return
+            await self._refresh(*target)
+
+    async def refresh_all(self) -> None:
+        """Read the status of every record (safety net for missed pushes)."""
+        for record in list(self.records.values()):
+            if self._stopping or not self._conn.connected:
+                return
+            try:
+                await self.request_status(record.record_type, record.index)
+            except ProtegeError as err:
+                _LOGGER.debug("Status refresh stopped: %s", err)
+                return
 
     async def door_lock(self, index: int) -> None:
         await self._run_command(p.build_record_command(p.GROUP_DOOR, p.DOOR_LOCK, index))

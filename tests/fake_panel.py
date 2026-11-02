@@ -26,8 +26,9 @@ class FakeUser:
 
 
 class FakePanel:
-    def __init__(self, *, allow_status_logged_out: bool = True) -> None:
+    def __init__(self, *, allow_status_logged_out: bool = True, force_update: bool = True) -> None:
         self.allow_status_logged_out = allow_status_logged_out
+        self.force_update = force_update
         self.users: dict[str, FakeUser] = {
             "1234": FakeUser(),  # saved integration PIN: doors and outputs, no arming
             "5678": FakeUser(doors=False, outputs=False, bypass=False, arm=True),  # a person
@@ -219,7 +220,7 @@ class FakePanel:
             out = [self._ack()]
             if flags & 0x01:
                 s.monitored.add((group, index))
-                if flags & 0x02:
+                if flags & 0x02 and self.force_update:
                     out.append(p.build_data_packet([self.status_block(group, index)]))
             else:
                 s.monitored.discard((group, index))
