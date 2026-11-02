@@ -138,3 +138,16 @@ async def test_event_client_receives_events(panel):
     await _wait_until(lambda: events)
     assert events[0].text.endswith("Cafe")
     await client.stop()
+
+
+async def test_debug_log_never_contains_the_pin(panel, caplog):
+    import logging
+
+    caplog.set_level(logging.DEBUG, logger="custom_components.ict_automation.protege")
+    client = ProtegeClient("127.0.0.1", panel.port, "1234")
+    await client.connect()
+    await client.start(await client.discover())
+    await client.door_lock(1)
+    await client.stop()
+    assert "login [PIN redacted]" in caplog.text
+    assert "00 02 01 02 03 04" not in caplog.text
