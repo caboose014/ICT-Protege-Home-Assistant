@@ -80,6 +80,11 @@ async def test_lock_unlock_and_open(hass: HomeAssistant, entry, panel: FakePanel
     await _settle(hass, lambda: hass.states.get("lock.door_1").state == "locked")
     await hass.services.async_call("lock", "open", {"entity_id": "lock.door_2"}, blocking=True)
     assert (p.GROUP_DOOR, p.DOOR_UNLOCK_MOMENTARY, 2) in panel.commands
+    panel.commands.clear()
+    await hass.services.async_call(
+        "button", "press", {"entity_id": "button.door_1_momentary_unlock"}, blocking=True
+    )
+    assert panel.commands == [(p.GROUP_DOOR, p.DOOR_UNLOCK_MOMENTARY, 1)]
 
 
 async def test_arming_uses_the_persons_code(hass: HomeAssistant, entry, panel: FakePanel) -> None:
