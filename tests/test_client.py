@@ -8,6 +8,7 @@ import pytest
 
 from custom_components.ict_automation.protege import (
     CommandRejected,
+    DoorLockState,
     InvalidPin,
     ProtegeClient,
     ProtegeEventClient,
@@ -151,3 +152,24 @@ async def test_debug_log_never_contains_the_pin(panel, caplog):
     await client.stop()
     assert "login [PIN redacted]" in caplog.text
     assert "00 02 01 02 03 04" not in caplog.text
+
+
+async def test_command_shows_assumed_state_before_panel_reports(panel):
+    """The real panel doesn't push changes made while logged in, so HA shows the result straight away."""
+    client = ProtegeClient("127.0.0.1", panel.port, "1234")
+    await client.connect()
+    records = await client.discover()
+    await client.start(records)
+    panel.push = lambda group, index: None  # panel stays silent
+    panel.force_update = False
+    updates = []
+    client.add_status_listener(updates.append)
+
+    await client.door_unlock_latched(1)
+    first_door = next(u for u in updates if u.record_type is RecordType.DOOR and u.index == 1)
+    assert first_door.status.lock_state == DoorLockState.UNLOCKED_LATCHED
+    assert client.status[(RecordType.DOOR, 1)].lock_state == DoorLockState.UNLOCKED_LATCHED
+
+    await client.set_bypass(RecordType.INPUT, 2, True)
+    assert client.status[(RecordType.INPUT, 2)].bypassed
+    await client.stop()
