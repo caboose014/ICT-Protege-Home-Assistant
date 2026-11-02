@@ -1,53 +1,59 @@
-import logging
-from homeassistant.components.lock import LockEntity
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import callback
-from homeassistant.helpers.entity import DeviceInfo
-from .const import DOMAIN, CONF_DOORS
+"""Doors as locks."""
 
-async def async_setup_entry(hass, entry, async_add_entities):
-    client = hass.data[DOMAIN][entry.entry_id]
-    data = entry.options.get(CONF_DOORS, {})
-    entities = [ICTDoor(client, int(k), v) for k, v in data.items()]
-    async_add_entities(entities)
+from __future__ import annotations
 
-class ICTDoor(LockEntity):
-    def __init__(self, client, door_id, name):
-        self._client = client
-        self._door_id = door_id
-        self._attr_name = name
-        self._attr_unique_id = f"ict_door_{door_id}"
-        self._is_locked = True
-        self._is_open = False
+from typing import Any
 
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, f"door_{self._door_id}")},
-            name=self._attr_name,
-            manufacturer="Integrated Control Technology",
-            model="Protege Door",
-            via_device=(DOMAIN, "ict_controller"),
-        )
+from homeassistant.components.lock import LockEntity, LockEntityFeature
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-    async def async_added_to_hass(self):
-        self._client.register_callback(self._handle_update)
+from . import ProtegeConfigEntry
+from .entity import ProtegeEntity
+from .protege import DoorLockState, DoorStatus, RecordType
 
-    @callback
-    def _handle_update(self, update):
-        if update["type"] == "door" and update["id"] == self._door_id:
-            self._is_locked = update["locked"]
-            self._is_open = update["open"]
-            self.async_write_ha_state()
+
+async def async_setup_entry(
+    hass: HomeAssistant, entry: ProtegeConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
+) -> None:
+    hub = entry.runtime_data
+    async_add_entities(ProtegeDoorLock(hub, r) for r in hub.records_of(RecordType.DOOR))
+
+
+class ProtegeDoorLock(ProtegeEntity, LockEntity):
+    """Lock = lock, unlock = unlock latched, open = momentary unlock."""
+
+    _attr_name = None
+    _attr_supported_features = LockEntityFeature.OPEN
+
+    def __init__(self, hub, record) -> None:
+        super().__init__(hub, record, "lock", hub.record_device(record))
 
     @property
-    def is_locked(self): return self._is_locked
-    
+    def is_locked(self) -> bool | None:
+        status: DoorStatus | None = self.status
+        return None if status is None else status.locked
+
     @property
-    def is_open(self): return self._is_open
+    def is_open(self) -> bool | None:
+        status: DoorStatus | None = self.status
+        if status is None:
+            return None
+        return not status.locked and status.open
 
-    async def async_lock(self, **kwargs):
-        await self._client.send_command(0x01, 0x00, self._door_id)
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        status: DoorStatus | None = self.status
+        if status is None:
+            return None
+        state = status.lock_state
+        return {"lock_reason": state.name.lower() if isinstance(state, DoorLockState) else state}
 
-    async def async_unlock(self, **kwargs):
-        await self._client.send_command(0x01, 0x02, self._door_id)
+    async def async_lock(self, **kwargs: Any) -> None:
+        await self._run(self.hub.client.door_lock(self.record.index))
+
+    async def async_unlock(self, **kwargs: Any) -> None:
+        await self._run(self.hub.client.door_unlock_latched(self.record.index))
+
+    async def async_open(self, **kwargs: Any) -> None:
+        await self._run(self.hub.client.door_unlock(self.record.index))

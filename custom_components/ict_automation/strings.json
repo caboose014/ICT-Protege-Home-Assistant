@@ -1,0 +1,141 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to your ICT Protege panel",
+        "description": "Uses the panel's Automation and Control service. Every door, area, input and output is found automatically.",
+        "data": {
+          "host": "Host",
+          "port": "Automation and Control port",
+          "pin": "Integration PIN"
+        },
+        "data_description": {
+          "host": "IP address or hostname of the Protege controller.",
+          "port": "The IP Port set on the Automation and Control service (usually 21000).",
+          "pin": "A user PIN with rights to doors, outputs and bypass. It does not need arm or disarm rights: arming always asks for the person's own code."
+        }
+      },
+      "reconfigure": {
+        "title": "Update connection",
+        "data": {
+          "host": "Host",
+          "port": "Automation and Control port",
+          "pin": "Integration PIN"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect. Check the host, the port, and that the Automation and Control service is enabled.",
+      "invalid_pin": "The panel rejected this PIN.",
+      "panel_error": "The panel refused a request. Check that \"Allow Status Requests When Not Logged In\" is enabled on the service, and the logs for details.",
+      "unknown": "Unexpected error. See the logs for details."
+    },
+    "abort": {
+      "already_configured": "This panel is already set up.",
+      "reconfigure_successful": "Connection updated.",
+      "wrong_panel": "That address belongs to a different panel."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Event logging",
+        "description": "Optional. Add a second Automation and Control service on the panel with its own port, and a view-only user with no control rights. The integration stays logged in on that service only to receive system events. Leave both fields empty to turn event logging off.",
+        "data": {
+          "events_port": "Events service port",
+          "events_pin": "View-only user PIN"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to the events service port.",
+      "invalid_pin": "The panel rejected this PIN.",
+      "panel_error": "The panel refused the event subscription.",
+      "events_incomplete": "Enter both the port and the PIN, or leave both empty.",
+      "events_same_port": "Use a separate service and port for events, not the control service.",
+      "unknown": "Unexpected error. See the logs for details."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "door_contact": { "name": "Contact" },
+      "alarm": { "name": "Alarm" },
+      "siren": { "name": "Siren" }
+    },
+    "button": {
+      "rescan": { "name": "Rescan panel" }
+    },
+    "event": {
+      "panel_event": {
+        "name": "Panel event",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "access_granted": "Access granted",
+              "access_denied": "Access denied",
+              "armed": "Armed",
+              "disarmed": "Disarmed",
+              "alarm": "Alarm",
+              "door": "Door",
+              "trouble": "Trouble",
+              "other": "Other"
+            }
+          }
+        }
+      }
+    },
+    "sensor": {
+      "door_state": {
+        "name": "Door state",
+        "state": {
+          "closed": "Closed",
+          "open": "Open",
+          "open_alert": "Open alert",
+          "left_open": "Left open",
+          "forced_open": "Forced open"
+        }
+      },
+      "input_state": {
+        "name": "{name} state",
+        "state": {
+          "closed": "Closed",
+          "open": "Open",
+          "short": "Short circuit",
+          "tamper": "Tamper"
+        }
+      }
+    },
+    "switch": {
+      "bypass": { "name": "{name} bypass" }
+    }
+  },
+  "exceptions": {
+    "command_failed": { "message": "The panel did not carry out the command: {error}" },
+    "code_required": { "message": "Enter your alarm code." },
+    "bypass_inputs_only": { "message": "Bypass only applies to input bypass switches." },
+    "timed_outputs_only": { "message": "Timed on only applies to outputs." }
+  },
+  "services": {
+    "force_arm": {
+      "name": "Force arm",
+      "description": "Arm the area even if inputs are open.",
+      "fields": {
+        "code": { "name": "Code", "description": "Your alarm code." }
+      }
+    },
+    "turn_on_for": {
+      "name": "Turn on for",
+      "description": "Turn an output on for a set time, then off.",
+      "fields": {
+        "duration": { "name": "Duration", "description": "How long to keep the output on (up to about 18 hours)." }
+      }
+    },
+    "bypass": {
+      "name": "Bypass input",
+      "description": "Bypass an input. Temporary bypass ends when the area next disarms.",
+      "fields": {
+        "permanent": { "name": "Permanent", "description": "Keep the bypass until it is removed." }
+      }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "entity": {
+    "button": { "rescan": { "default": "mdi:magnify-scan" } },
+    "event": { "panel_event": { "default": "mdi:shield-home" } },
+    "sensor": {
+      "door_state": { "default": "mdi:door" },
+      "input_state": { "default": "mdi:motion-sensor" }
+    },
+    "switch": {
+      "bypass": { "default": "mdi:shield-check", "state": { "on": "mdi:shield-off" } }
+    }
+  },
+  "services": {
+    "force_arm": { "service": "mdi:shield-lock" },
+    "turn_on_for": { "service": "mdi:timer-outline" },
+    "bypass": { "service": "mdi:shield-off" }
+  }
+}

@@ -1,115 +1,86 @@
 <p align="center">
-  <img src="custom_components/ict_automation/icon.png" width="150" height="150" alt="ICT Automation Icon">
+  <img src="custom_components/ict_automation/icon.png" width="150" height="150" alt="ICT Protege">
 </p>
 
-# ICT Protege Automation for Home Assistant
+# ICT Protege for Home Assistant
 
-A custom integration to control **ICT Protege WX** and **Protege GX** systems via Home Assistant.
+Local, push-based control of **ICT Protege WX** panels through the panel's Automation and Control service.
+Enter the panel address and a PIN, and every door, area, input, output and trouble input is found and added automatically.
 
-This integration connects directly to the ICT Controller's **Automation Service** (TCP Port 21000), allowing for real-time status updates and control of Doors, Areas, Inputs, and Outputs.
+## What you get
 
-## Features
+| Panel record | Home Assistant |
+| --- | --- |
+| Panel | A controller device with firmware and serial, a **Rescan panel** button, and (optional) a **Panel event** entity |
+| Door | A device with a **lock** (lock, unlock latched, *open* = momentary unlock), a **contact** sensor and a **door state** sensor (closed, open, left open, forced open) |
+| Area | A device with an **alarm panel** (away = normal arm, home = stay, night = instant) plus **alarm** and **siren** sensors |
+| Input | A binary sensor and a **bypass** switch, grouped under the module it is wired to (`CP001` on the controller, `ZX001` and so on for expanders). Use *Show as* in the entity settings to make it a door, window, motion or smoke sensor |
+| Output | A switch |
+| Trouble input | A diagnostic problem sensor, disabled by default |
 
-* **🚪 Doors:**
-    * Lock and Unlock controls.
-    * Real-time status: Open/Closed and Locked/Unlocked.
-* **🛡️ Areas:**
-    * Arm (Away) and Disarm controls.
-    * Real-time status: Armed/Disarmed and Alarm Active.
-* **🔌 Inputs & Troubles:**
-    * Monitors physical state (Open/Closed).
-    * **Automatic Trouble Detection:** Automatically creates a secondary "Trouble" sensor for every input to monitor tampering, short circuits, or cut wires.
-    * **Bypassing:** Includes a dropdown select to Bypass/Unbypass inputs directly from HA.
-* **💡 Outputs:**
-    * Turn PGMs and other outputs On/Off.
+Rename anything with Home Assistant's normal rename. Names default to the module reference, for example `Input ZX001:03`.
+Pulling names from the WX web interface is planned.
 
----
+Actions: `ict_automation.force_arm` (alarm panel), `ict_automation.turn_on_for` (output, with a duration) and
+`ict_automation.bypass` (bypass switch, optionally permanent).
 
-## ⚙️ ICT Controller Configuration (Prerequisites)
+## How PINs are used
 
-Before installing, you must configure the **Automation Service** on your ICT Controller. This is found under **System > Services > Automation** (or similar depending on your WX/GX version).
+* **Integration PIN** (set during setup): a panel user with rights to doors, outputs and bypass. It does **not** need arm or disarm rights.
+  The integration watches the panel without being logged in, and logs in with this PIN only for the moment it sends a command.
+* **Arming and disarming** always ask for the person's own code, which goes straight to the panel. Home Assistant never stores it.
+* **Events user** (optional): a view-only user with no control rights, used only on a separate events service (below).
 
-**Match these settings exactly** to ensure the integration can communicate with your controller:
+When the panel refuses a command (wrong code, no rights, door in lockdown, input cannot be bypassed) the reason is shown in Home Assistant.
 
-| Setting | Value | Note |
-| :--- | :--- | :--- |
-| **IP Port** | `21000` | Default automation port |
-| **Encryption Level** | `None` | Currently supported mode |
-| **Checksum Type** | `8 Bit Sum` | Required for protocol matching |
+## Panel setup
 
-### Recommended Options (Checkboxes)
-Refer to the screenshot below for the tested configuration:
+In the WX web interface go to **Automation > Services**, add an *Automation and Control* service, and set:
 
-* [ ] **Numbers are Big Endian** (MUST BE UNCHECKED - Critical)
-* [x] **Allow Status Requests When Not Logged In**
-* [x] **Ack Commands**
-* [ ] **Expect Ack For Status Monitoring** (Leave unchecked to prevent connection drops)
+| Setting | Value |
+| --- | --- |
+| IP Port | `21000` (any free port) |
+| Encryption Level | None |
+| Checksum Type | 8 Bit Sum |
+| Numbers are Big Endian | **Off** |
+| Allow Status Requests When Not Logged In | **On** (required) |
+| Ack Commands | **On** (required) |
+| Expect Ack For Status Monitoring / Events, Resend options | Off |
 
-> **⚠️ Important:** The "Numbers are Big Endian" box must be **unchecked**. This integration uses Little Endian byte order. If checked, IDs will be interpreted incorrectly.
+### Optional: event logging
 
----
+To get panel events (entry granted, alarms, arming) as a Home Assistant event entity and `ict_automation_event` bus events:
 
-## 📥 Installation
+1. Add a **second** Automation and Control service with the same settings on another port, for example `21001`.
+2. Create a panel user with no control rights for it.
+3. In Home Assistant open the integration's **Configure** and enter that port and PIN.
 
-### Method 1: HACS (Recommended)
-1.  Open **HACS** in Home Assistant.
-2.  Go to **Integrations** > **Custom repositories** (top right menu).
-3.  Paste this repository URL and select **Integration**.
-4.  Click **Download**.
-5.  **Restart Home Assistant**.
+The integration stays logged in on that service only to receive events, and never sends commands through it.
 
-### Method 2: Manual
-1.  Download the repository as a ZIP file.
-2.  Extract the `custom_components/ict_automation` folder.
-3.  Copy this folder into your Home Assistant's `/config/custom_components/` directory.
-4.  Restart Home Assistant.
+## Install
 
----
+### Manual (side-load)
 
-## 🔧 Configuration
+1. Copy `custom_components/ict_automation` into your Home Assistant `config/custom_components/` folder
+   (so you have `config/custom_components/ict_automation/manifest.json`).
+2. Restart Home Assistant.
+3. **Settings > Devices & services > Add integration > ICT Protege**.
 
-1.  Go to **Settings > Devices & Services > Add Integration**.
-2.  Search for **"ICT Protege Automation"**.
-3.  Enter your connection details:
-    * **Host:** IP Address of your ICT Controller (e.g., `192.168.1.50`).
-    * **Port:** `21000`.
-    * **Service PIN:** A valid User PIN from your ICT system.
+### HACS
 
-> **🔐 About the Service PIN:**
-> The PIN you enter here is used to authenticate the connection. This user **must have permission** to control the Doors, Areas, and Outputs you intend to use. If the user does not have "Door Control" permissions in Protege, Home Assistant will be unable to unlock doors.
+Add this repository as a custom repository (category *Integration*), download **ICT Protege**, and restart.
 
----
+### Upgrading from 1.x
 
-## 🔎 Finding Device IDs
+Existing entries are migrated automatically: the connection details are kept, the old hand-entered doors, areas, inputs and outputs are
+removed, and everything is re-created from the panel. Entity IDs change, so update dashboards and automations afterwards.
 
-When adding devices (Doors, Areas, etc.) to the integration, you must enter the correct **ID**.
+## Development
 
-### Method 1: The Default Way (Recommended)
-By default, the integration expects the **Database Record ID** (often labeled as "Reporting ID").
-1.  Open Protege WX/GX.
-2.  Go to **Programming > [Doors/Areas/Inputs]**.
-3.  Look for the column labeled **Record**, **ID**, or **Reporting ID**.
-4.  Enter that specific number into Home Assistant.
-    * *Example:* If your front door is Record `12`, enter `12` (even if it is the first item in the list).
+```bash
+pip install -r requirements_test.txt
+pytest
+```
 
-### Method 2: The "Display Order" Way
-**Only use this method** if you have explicitly added the command `ACPUseDisplayOrder = true` to your Controller's command string settings.
-1.  Open Protege WX/GX.
-2.  Ignore the ID column.
-3.  Count the rows from the top of the list (1, 2, 3...).
-4.  Enter the **Row Number** into Home Assistant.
-
----
-
-## 📝 Usage & Troubleshooting
-
-* **"Authentication Failed" Error:**
-    * Ensure the PIN is correct.
-    * Ensure the user associated with that PIN has valid permissions in Protege.
-    * Check that no other system (like a DVR or second integration) is blocking the Automation Port.
-
-* **Inputs show as "Closed" but are actually Open:**
-    * Check the **"Numbers are Big Endian"** setting in the ICT Services menu. It must be **OFF**.
-
-* **Status updates are slow:**
-    * The integration relies on the controller pushing updates. Ensure "Ack Commands" is enabled in the ICT Service settings so the controller knows we are listening.
+Tests run against a simulated panel (`tests/fake_panel.py`) built from ICT's *Automation and Control Service* protocol document.
+The protocol client in `custom_components/ict_automation/protege/` has no Home Assistant imports.

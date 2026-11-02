@@ -1,18 +1,26 @@
+"""Constants for the ICT Protege integration."""
+
+from __future__ import annotations
+
 DOMAIN = "ict_automation"
+MANUFACTURER = "Integrated Control Technology"
 
-CONF_HOST = "host"
-CONF_PORT = "port"
-CONF_PASSWORD = "password"
+CONF_PIN = "pin"
+CONF_RECORDS = "records"
+CONF_EVENTS_PORT = "events_port"
+CONF_EVENTS_PIN = "events_pin"
 
-CONF_DOORS = "doors"
-CONF_AREAS = "areas"
-CONF_INPUTS = "inputs"
-CONF_OUTPUTS = "outputs"
-# Troubles are now part of inputs, but we keep the key just in case of legacy usage
-CONF_TROUBLES = "troubles" 
+DEFAULT_PORT = 21000
 
-# New Constants for Arming Modes
-CONF_ENABLE_AWAY = "enable_arm_away"
-CONF_ENABLE_STAY = "enable_arm_stay"
-CONF_ENABLE_NIGHT = "enable_arm_night"
-CONF_ENABLE_BYPASS = "enable_arm_bypass"
+EVENT_PANEL = f"{DOMAIN}_event"
+
+EVENT_TYPES = [
+    "access_granted",
+    "access_denied",
+    "armed",
+    "disarmed",
+    "alarm",
+    "door",
+    "trouble",
+    "other",
+]
