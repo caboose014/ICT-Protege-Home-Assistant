@@ -11,6 +11,11 @@ from dataclasses import dataclass
 
 from . import protocol as p
 from .models import (
+    DoorLockState,
+    DoorStatus,
+    InputStatus,
+    OutputState,
+    OutputStatus,
     PanelEvent,
     PanelInfo,
     Record,
@@ -574,8 +579,19 @@ class ProtegeClient:
         with contextlib.suppress(CommandRejected):
             await self._conn.command(p.build_command_packet(p.GROUP_SYSTEM, p.SYS_LOGOUT))
 
-    async def _run_command(self, raw: bytes, pin: str | None = None) -> None:
-        """Log in, send one command, log out, and restore monitoring."""
+    async def _run_command(
+        self,
+        raw: bytes,
+        pin: str | None = None,
+        *,
+        assumed: Status | None = None,
+        readback: tuple[float, ...] = (0.5, 1.5, 3.0, 6.0, 10.0),
+    ) -> None:
+        """Log in, send one command, log out, and restore monitoring.
+
+        `assumed` is shown straight away once the panel acknowledges the command, so the
+        UI responds instantly; read-backs from the panel then confirm or correct it.
+        """
         if not self._conn.connected:
             raise CannotConnect("Not connected to the panel")
         error: ProtegeError | None = None
@@ -589,6 +605,9 @@ class ProtegeClient:
             finally:
                 with contextlib.suppress(ProtegeError):
                     await self._logout()
+        target = _command_target(raw)
+        if error is None and assumed is not None and target is not None:
+            self._apply(StatusUpdate(target[0], target[1], assumed))
         try:
             await self._restore_monitoring()
         except ProtegeError as err:
@@ -598,11 +617,10 @@ class ProtegeClient:
             # Not every panel honours the "force update" monitoring flag, and changes made
             # while logged in are not pushed. Read the commanded record back explicitly, and
             # again shortly after for doors and outputs that change state on a timer.
-            target = _command_target(raw)
             if target is not None:
                 await self._refresh(*target)
-                self._spawn(self._refresh_later(target, (1.5, 6.0)))
-            self._spawn(self.refresh_all())
+                self._spawn(self._refresh_later(target, readback))
+            self._spawn(self._refresh_all_later(readback[-1] + 2 if readback else 2))
         if error is not None:
             raise error
 
@@ -624,6 +642,20 @@ class ProtegeClient:
                 return
             await self._refresh(*target)
 
+    async def _refresh_all_later(self, delay: float) -> None:
+        await asyncio.sleep(delay)
+        await self.refresh_all()
+
+    def _apply(self, update: StatusUpdate) -> None:
+        self.status[(update.record_type, update.index)] = update.status
+        for listener in list(self._status_listeners):
+            listener(update)
+
+    def _assumed_door(self, index: int, lock_state: DoorLockState) -> DoorStatus:
+        current = self.status.get((RecordType.DOOR, index))
+        door_state = current.door_state if isinstance(current, DoorStatus) else 0
+        return DoorStatus(lock_state, door_state)
+
     async def refresh_all(self) -> None:
         """Read the status of every record (safety net for missed pushes)."""
         for record in list(self.records.values()):
@@ -636,14 +668,25 @@ class ProtegeClient:
                 return
 
     async def door_lock(self, index: int) -> None:
-        await self._run_command(p.build_record_command(p.GROUP_DOOR, p.DOOR_LOCK, index))
+        await self._run_command(
+            p.build_record_command(p.GROUP_DOOR, p.DOOR_LOCK, index),
+            assumed=self._assumed_door(index, DoorLockState.LOCKED),
+        )
 
     async def door_unlock(self, index: int) -> None:
         """Momentary unlock (the door relocks after its programmed time)."""
-        await self._run_command(p.build_record_command(p.GROUP_DOOR, p.DOOR_UNLOCK_MOMENTARY, index))
+        # Read back for longer so the automatic relock shows up.
+        await self._run_command(
+            p.build_record_command(p.GROUP_DOOR, p.DOOR_UNLOCK_MOMENTARY, index),
+            assumed=self._assumed_door(index, DoorLockState.UNLOCKED_USER),
+            readback=(0.5, 1.5, 3.0, 6.0, 10.0, 20.0, 35.0, 60.0),
+        )
 
     async def door_unlock_latched(self, index: int) -> None:
-        await self._run_command(p.build_record_command(p.GROUP_DOOR, p.DOOR_UNLOCK_LATCHED, index))
+        await self._run_command(
+            p.build_record_command(p.GROUP_DOOR, p.DOOR_UNLOCK_LATCHED, index),
+            assumed=self._assumed_door(index, DoorLockState.UNLOCKED_LATCHED),
+        )
 
     async def area_command(self, index: int, sub_command: int, code: str) -> None:
         await self._run_command(p.build_record_command(p.GROUP_AREA, sub_command, index), pin=code)
@@ -654,10 +697,19 @@ class ProtegeClient:
             raw = p.build_record_command(p.GROUP_OUTPUT, p.OUTPUT_ON_TIMED, index, extra)
         else:
             raw = p.build_record_command(p.GROUP_OUTPUT, p.OUTPUT_ON, index)
-        await self._run_command(raw)
+        await self._run_command(raw, assumed=self._assumed_output(index, OutputState.ON))
 
     async def output_off(self, index: int) -> None:
-        await self._run_command(p.build_record_command(p.GROUP_OUTPUT, p.OUTPUT_OFF, index))
+        await self._run_command(
+            p.build_record_command(p.GROUP_OUTPUT, p.OUTPUT_OFF, index),
+            assumed=self._assumed_output(index, OutputState.OFF),
+        )
+
+    def _assumed_output(self, index: int, state: OutputState) -> OutputStatus | None:
+        current = self.status.get((RecordType.OUTPUT, index))
+        if not isinstance(current, OutputStatus):
+            return None
+        return OutputStatus(current.reference, state)
 
     async def set_bypass(
         self, record_type: RecordType, index: int, bypass: bool, *, permanent: bool = False
@@ -670,7 +722,14 @@ class ProtegeClient:
             sub = p.INPUT_BYPASS_PERMANENT
         else:
             sub = p.INPUT_BYPASS_TEMPORARY
-        await self._run_command(p.build_record_command(record_type.group, sub, index))
+        assumed = None
+        current = self.status.get((record_type, index))
+        if isinstance(current, InputStatus):
+            flags = current.bypass_flags & ~0x03
+            if bypass:
+                flags |= 0x03 if permanent else 0x01
+            assumed = InputStatus(current.reference, current.state, flags)
+        await self._run_command(p.build_record_command(record_type.group, sub, index), assumed=assumed)
 
 
 EventListener = Callable[[PanelEvent], None]
