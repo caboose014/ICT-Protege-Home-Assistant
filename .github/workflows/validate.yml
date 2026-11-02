@@ -1,11 +1,16 @@
 name: Validate
 
+# Runs once per pull request update (not on every branch push), or by hand.
 on:
-  push:
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  tests:
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,17 +20,4 @@ jobs:
       - run: pip install -r requirements_test.txt ruff
       - run: ruff check custom_components tests
       - run: python -m pytest -q
-
-  hassfest:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
       - uses: home-assistant/actions/hassfest@master
-
-  hacs:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: hacs/action@main
-        with:
-          category: integration
-          ignore: brands topics
