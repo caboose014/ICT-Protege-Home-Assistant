@@ -158,3 +158,23 @@ async def test_migrates_v1_entry(hass: HomeAssistant, panel: FakePanel) -> None:
     assert ent_reg.async_get_entity_id("lock", DOMAIN, "ict_door_1") is None
     assert hass.states.get("lock.door_1") is not None
     await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_lock_state_updates_without_force_update(hass: HomeAssistant, panel: FakePanel) -> None:
+    """Real panels may ignore the monitoring 'force update' flag; state must still follow commands."""
+    panel.force_update = False
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        unique_id="00A1B2C3",
+        data={CONF_HOST: "127.0.0.1", CONF_PORT: panel.port, CONF_PIN: "1234"},
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    await hass.services.async_call("lock", "unlock", {"entity_id": "lock.door_1"}, blocking=True)
+    await _settle(hass, lambda: hass.states.get("lock.door_1").state == "unlocked")
+    await hass.services.async_call("lock", "lock", {"entity_id": "lock.door_1"}, blocking=True)
+    await _settle(hass, lambda: hass.states.get("lock.door_1").state == "locked")
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
