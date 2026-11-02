@@ -178,7 +178,11 @@ class ProtegeConnection:
         if self._writer is None:
             raise CannotConnect("Not connected")
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("TX %s:%s %s", self.host, self.port, raw.hex(" "))
+            if raw[4:5] == bytes((p.PKT_TYPE_COMMAND,)) and raw[6:8] == bytes((p.GROUP_SYSTEM, p.SYS_LOGIN)):
+                # Login packets carry the PIN (or the code someone typed to arm/disarm).
+                _LOGGER.debug("TX %s:%s login [PIN redacted]", self.host, self.port)
+            else:
+                _LOGGER.debug("TX %s:%s %s", self.host, self.port, raw.hex(" "))
         try:
             self._writer.write(raw)
             await self._writer.drain()
