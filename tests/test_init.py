@@ -51,6 +51,8 @@ async def test_devices_and_entities(hass: HomeAssistant, entry) -> None:
     assert names == {"Protege WX", "Door 1", "Door 2", "Area 1", "ZX001"}
     controller = dev_reg.async_get_device(identifiers={(DOMAIN, "00A1B2C3")})
     assert controller.sw_version == "WX 4.00.1676"
+    door = dev_reg.async_get_device(identifiers={(DOMAIN, "00A1B2C3_door_1")})
+    assert door.via_device_id == controller.id
 
     assert hass.states.get("lock.door_1").state == "locked"
     assert hass.states.get("binary_sensor.door_1_contact").state == "off"

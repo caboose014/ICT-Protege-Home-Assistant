@@ -94,7 +94,6 @@ class ProtegeHub:
             name=module,
             manufacturer=MANUFACTURER,
             model=f"{module[:2]} module",
-            via_device=(DOMAIN, self.serial),
         )
 
     def record_device(self, record: Record) -> DeviceInfo:
@@ -104,7 +103,6 @@ class ProtegeHub:
             name=record.default_name,
             manufacturer=MANUFACTURER,
             model=f"Protege {record.record_type.value}",
-            via_device=(DOMAIN, self.serial),
         )
 
     def records_of(self, record_type: RecordType) -> list[Record]:
@@ -174,6 +172,21 @@ class ProtegeHub:
         )
         for listener in list(self._event_listeners):
             listener(event)
+
+
+def link_child_devices(hass: HomeAssistant, hub: ProtegeHub) -> None:
+    """Point door, area and module devices at the controller.
+
+    Done through the registry rather than DeviceInfo.via_device, which newer
+    Home Assistant releases deprecate.
+    """
+    dev_reg = dr.async_get(hass)
+    controller = dev_reg.async_get_device(identifiers={(DOMAIN, hub.serial)})
+    if controller is None:
+        return
+    for device in dr.async_entries_for_config_entry(dev_reg, hub.entry.entry_id):
+        if device.id != controller.id and device.via_device_id != controller.id:
+            dev_reg.async_update_device(device.id, via_device_id=controller.id)
 
 
 def remove_stale_devices(hass: HomeAssistant, hub: ProtegeHub) -> None:
