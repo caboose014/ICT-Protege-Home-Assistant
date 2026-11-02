@@ -58,12 +58,23 @@
   },
   "entity": {
     "binary_sensor": {
-      "door_contact": { "name": "Contact" },
-      "alarm": { "name": "Alarm" },
-      "siren": { "name": "Siren" }
+      "door_contact": {
+        "name": "Contact"
+      },
+      "alarm": {
+        "name": "Alarm"
+      },
+      "siren": {
+        "name": "Siren"
+      }
     },
     "button": {
-      "rescan": { "name": "Rescan panel" }
+      "rescan": {
+        "name": "Rescan panel"
+      },
+      "momentary_unlock": {
+        "name": "Momentary unlock"
+      }
     },
     "event": {
       "panel_event": {
@@ -106,35 +117,54 @@
       }
     },
     "switch": {
-      "bypass": { "name": "{name} bypass" }
+      "bypass": {
+        "name": "{name} bypass"
+      }
     }
   },
   "exceptions": {
-    "command_failed": { "message": "The panel did not carry out the command: {error}" },
-    "code_required": { "message": "Enter your alarm code." },
-    "bypass_inputs_only": { "message": "Bypass only applies to input bypass switches." },
-    "timed_outputs_only": { "message": "Timed on only applies to outputs." }
+    "command_failed": {
+      "message": "The panel did not carry out the command: {error}"
+    },
+    "code_required": {
+      "message": "Enter your alarm code."
+    },
+    "bypass_inputs_only": {
+      "message": "Bypass only applies to input bypass switches."
+    },
+    "timed_outputs_only": {
+      "message": "Timed on only applies to outputs."
+    }
   },
   "services": {
     "force_arm": {
       "name": "Force arm",
       "description": "Arm the area even if inputs are open.",
       "fields": {
-        "code": { "name": "Code", "description": "Your alarm code." }
+        "code": {
+          "name": "Code",
+          "description": "Your alarm code."
+        }
       }
     },
     "turn_on_for": {
       "name": "Turn on for",
       "description": "Turn an output on for a set time, then off.",
       "fields": {
-        "duration": { "name": "Duration", "description": "How long to keep the output on (up to about 18 hours)." }
+        "duration": {
+          "name": "Duration",
+          "description": "How long to keep the output on (up to about 18 hours)."
+        }
       }
     },
     "bypass": {
       "name": "Bypass input",
       "description": "Bypass an input. Temporary bypass ends when the area next disarms.",
       "fields": {
-        "permanent": { "name": "Permanent", "description": "Keep the bypass until it is removed." }
+        "permanent": {
+          "name": "Permanent",
+          "description": "Keep the bypass until it is removed."
+        }
       }
     }
   }
