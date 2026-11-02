@@ -12,7 +12,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
 from .const import CONF_PIN, CONF_RECORDS
-from .hub import ProtegeHub, records_to_data, remove_stale_devices
+from .hub import ProtegeHub, link_child_devices, records_to_data, remove_stale_devices
 from .protege import ProtegeClient, ProtegeError
 
 _LOGGER = logging.getLogger(__name__)
@@ -54,8 +54,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ProtegeConfigEntry) -> b
     entry.runtime_data = hub
     await hub.async_start()
     remove_stale_devices(hass, hub)
+    dr.async_get(hass).async_get_or_create(config_entry_id=entry.entry_id, **hub.controller_device)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    link_child_devices(hass, hub)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
 
