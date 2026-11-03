@@ -35,3 +35,14 @@ EVENT_TYPES = [
     "trouble",
     "other",
 ]
+
+# How the integration reaches the panel.
+CONF_CONNECTION = "connection"
+CONNECTION_ACS = "acs"  # Automation and Control service (needs the licence)
+CONNECTION_WEB = "web"  # WX web interface only
+
+# Web-only mode: how arming and disarming check a code.
+CONF_CODE_MODE = "code_mode"
+CODE_MODE_HA = "ha_codes"  # codes kept (hashed) by the integration
+CODE_MODE_NONE = "none"  # no code; Home Assistant's own permissions only
+CONF_CODES = "codes"

@@ -200,6 +200,28 @@ class WXClient:
             raise WXError(f"Listing {record_type.value}s failed: {reply.strip()[:60]}")
         return parse_list(reply)
 
+    @property
+    def cookie(self) -> str | None:
+        """The session cookie, so a session can be picked up again after a restart."""
+        return self._cookie if self._logged_in else None
+
+    @property
+    def logged_in(self) -> bool:
+        return self._logged_in
+
+    def forget_session(self) -> None:
+        """The controller dropped the session; the next request must log in again."""
+        self._logged_in = False
+
+    def resume(self, cookie: str) -> None:
+        """Use a saved session cookie instead of logging in (checked by the next request)."""
+        self._cookie = cookie
+        self._logged_in = True
+
+    async def request(self, params: str) -> str:
+        """Send one request in the current session and return the raw reply."""
+        return await self._post(params)
+
     async def detail(self, table: str, rec_id: int) -> dict[str, str]:
         """Every field of one record, or an empty dict if the operator may not see it."""
         reply = await self._post(f"Request&Type=Detail&SubType={table}&RecId={rec_id}")
@@ -233,14 +255,8 @@ class WXClient:
             inputs: dict[int, dict[str, str]] = {}
             for rec_id, _ in lists.get(RecordType.INPUT, []):
                 inputs[rec_id] = await self.detail(TABLES[RecordType.INPUT], rec_id)
-            type_ids = {
-                type_id
-                for fields in inputs.values()
-                for slot in INPUT_AREA_SLOTS
-                if (type_id := _record_id(fields.get(f"ZoneType{slot}"))) is not None
-            }
             input_types = {
-                type_id: await self.detail(TABLE_INPUT_TYPES, type_id) for type_id in sorted(type_ids)
+                type_id: await self.detail(TABLE_INPUT_TYPES, type_id) for type_id in input_type_ids(inputs)
             }
             return WXSite(lists, inputs, input_types)
         finally:
@@ -275,6 +291,37 @@ def apply_names(records: list[Record], lists: dict[RecordType, list[tuple[int, s
     return named
 
 
+def zone_settings(
+    fields: dict[str, str], input_types: dict[int, dict[str, str]], area_index: dict[int, int]
+) -> tuple[list[int], list[int]]:
+    """(areas, areas where the input may be open when arming) for one input's detail fields.
+
+    `area_index` maps WX area ids to the record indexes the integration uses.
+    """
+    areas: list[int] = []
+    arm_open: list[int] = []
+    for slot in INPUT_AREA_SLOTS:
+        index = area_index.get(_record_id(fields.get(f"Area{slot}")))
+        if index is None or index in areas:
+            continue
+        areas.append(index)
+        input_type = input_types.get(_record_id(fields.get(f"ZoneType{slot}")))
+        if input_type and allowed_open_when_arming(input_type):
+            arm_open.append(index)
+    return areas, arm_open
+
+
+def input_type_ids(inputs: dict[int, dict[str, str]]) -> list[int]:
+    return sorted(
+        {
+            type_id
+            for fields in inputs.values()
+            for slot in INPUT_AREA_SLOTS
+            if (type_id := _record_id(fields.get(f"ZoneType{slot}"))) is not None
+        }
+    )
+
+
 def apply_zone_settings(records: list[Record], site: WXSite) -> int:
     """Give inputs their areas, and the areas where they may be open when arming.
 
@@ -293,14 +340,6 @@ def apply_zone_settings(records: list[Record], site: WXSite) -> int:
         fields = site.inputs.get(wx_id)
         if not fields:
             continue  # the operator can't read this input's details
-        record.areas, record.arm_open = [], []
-        for slot in INPUT_AREA_SLOTS:
-            index = area_index.get(_record_id(fields.get(f"Area{slot}")))
-            if index is None or index in record.areas:
-                continue
-            record.areas.append(index)
-            input_type = site.input_types.get(_record_id(fields.get(f"ZoneType{slot}")))
-            if input_type and allowed_open_when_arming(input_type):
-                record.arm_open.append(index)
+        record.areas, record.arm_open = zone_settings(fields, site.input_types, area_index)
         updated += 1
     return updated

@@ -49,7 +49,8 @@ class ProtegeRescanButton(ButtonEntity):
                 translation_key="command_failed",
                 translation_placeholders={"error": str(err)},
             ) from err
-        await async_name_records(self.hass, self.hub.entry, records)
+        if not self.hub.web:  # the web interface already gave names and zone settings
+            await async_name_records(self.hass, self.hub.entry, records)
         data = records_to_data(records)
         entry = self.hub.entry
         if data != entry.data.get(CONF_RECORDS):

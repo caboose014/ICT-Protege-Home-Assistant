@@ -18,8 +18,10 @@ from custom_components.ict_automation.const import (
 from .fake_panel import FakePanel
 
 
-async def _start_flow(hass: HomeAssistant):
-    return await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+async def _start_flow(hass: HomeAssistant, method: str = "acs"):
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+    assert result["type"] is FlowResultType.MENU
+    return await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": method})
 
 
 async def test_user_flow_discovers_everything(hass: HomeAssistant, panel: FakePanel) -> None:

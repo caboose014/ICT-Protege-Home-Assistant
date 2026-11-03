@@ -4,13 +4,16 @@
 
 # ICT Protege for Home Assistant
 
-Local, push-based control of **ICT Protege WX** panels through the panel's Automation and Control service.
-Enter the panel address and a PIN, and every door, area, input, output and trouble input is found and added automatically.
+Local control of **ICT Protege WX** panels. Every door, area, input, output and trouble input is found and added automatically.
+There are two ways to connect:
+
+* **Automation and Control service** (recommended): push-based, instant updates, and arm codes are checked by the panel.
+  It needs the panel's *Automation and Control* licence.
+* **Web interface only**: for panels without that licence. It logs in to the WX web interface as a limited operator
+  and watches the panel's event log, so it needs no licence. See [Web-only mode](#web-only-mode).
 
 > [!NOTE]
-> This integration needs the panel's **Automation and Control** service, which is a licensed feature.
-> If your WX doesn't have that licence, try [ha-protege-wx](https://github.com/olliemaller/ha-protege-wx) instead.
-> It works through the WX web interface, so it doesn't need the licence.
+> [ha-protege-wx](https://github.com/olliemaller/ha-protege-wx) is another integration that works through the WX web interface.
 
 ## What you get
 
@@ -106,6 +109,30 @@ It logs in once at start-up (and on Rescan), reads names, which areas each input
 No session is kept open, and only read requests are sent, so this operator never changes anything.
 Requires firmware 4.00.1676 or later.
 
+## Web-only mode
+
+If your WX has the Automation and Control licence, use the control service instead: it is faster, and the panel itself checks arm codes.
+Without the licence, choose **Web interface only** when adding the integration.
+
+**On the ICT side**, enable HTTPS on the controller (firmware 4.00.1676 or later) and create an operator just for Home Assistant.
+Give its role only what you want Home Assistant to do: view status and events, plus control of the doors, areas, outputs and
+inputs (bypass) it should operate. Don't share this operator with people, so their logins and Home Assistant's session stay separate.
+
+**How it stays connected**: the integration keeps one session, reads only the event log about every two seconds, and re-reads a
+status table only when an event says something in it changed (plus a full read every 30 seconds). The session cookie is saved, so a
+restart of Home Assistant carries on with the same session instead of logging in again. If the session is dropped it logs in again,
+but never more than 6 times an hour, backing off up to 10 minutes between tries. If the panel rejects the password it stops trying
+and asks you to re-enter it from **Settings > Devices & services**, so it can't lock the operator out. It logs out when the integration is unloaded.
+
+**Arm codes**: the web interface has no way to check a keypad code, so pick one when you add the integration (change it later under **Configure**):
+
+* **Codes checked in Home Assistant**: add a name and code for each person. Codes are stored only as salted hashes, and the person's
+  name shows as *changed by* on the alarm panel.
+* **No code**: anyone who can use the alarm panel in Home Assistant can arm and disarm. Use Home Assistant users and permissions to limit that.
+
+Everything else in [What you get](#what-you-get) works the same, including open zones, ready to arm, alarm cause and emergency alerts.
+Events show up in the **Panel event** entity and logbook a second or two after they happen.
+
 ## Install
 
 ### HACS
@@ -121,7 +148,8 @@ Add this repository as a custom repository (category *Integration*), download **
 ## Setup on the Home Assistant side
 
 1. **Settings > Devices & services > Add integration > ICT Protege**.
-2. Enter the controller's IP address, the control service port (`21000`) and the integration PIN.
+2. Choose **Automation and Control service**, then enter the controller's IP address, the control service port (`21000`) and the integration PIN.
+   (For **Web interface only**, enter the address, HTTPS port, operator login and code option; see [Web-only mode](#web-only-mode).)
    Every door, area, input, output and trouble input is found and added.
 3. Open the integration's **Configure** (the cog on the hub) for the optional extras:
    * **Names from the WX web interface**: the WX operator name, password and HTTPS port (usually `443`).

@@ -18,6 +18,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
 
 from .const import (
+    CONF_CONNECTION,
     CONF_EVENTS_PIN,
     CONF_EVENTS_PORT,
     CONF_PIN,
@@ -25,6 +26,7 @@ from .const import (
     CONF_WX_PASSWORD,
     CONF_WX_PORT,
     CONF_WX_USERNAME,
+    CONNECTION_WEB,
     DEFAULT_WX_PORT,
     DOMAIN,
     EVENT_EMERGENCY,
@@ -152,6 +154,15 @@ class ProtegeHub:
     # ----- identity -------------------------------------------------------
 
     @property
+    def web(self) -> bool:
+        """Web-only mode (no Automation and Control service)."""
+        return self.entry.data.get(CONF_CONNECTION) == CONNECTION_WEB
+
+    @property
+    def has_events(self) -> bool:
+        return self.web or self.events is not None
+
+    @property
     def panel(self) -> PanelInfo:
         return self.client.panel
 
@@ -173,7 +184,8 @@ class ProtegeHub:
             model=f"Protege {fw_type} controller",
             serial_number=self.panel.serial_str,
             sw_version=self.panel.firmware,
-            configuration_url=f"https://{self.client.host}",
+            configuration_url=f"https://{self.client.host}"
+            + (f":{self.client.port}" if self.web and self.client.port != 443 else ""),
         )
 
     def module_device(self, module: str | None) -> DeviceInfo:
@@ -282,6 +294,10 @@ class ProtegeHub:
         self._unsubs.append(self.client.add_connection_listener(self._on_connection))
         await self.client.start(self.records)
 
+        if self.web:
+            # The web client reads the event log itself.
+            self._unsubs.append(self.client.add_listener(self._on_event))
+            return
         port = self.entry.options.get(CONF_EVENTS_PORT)
         pin = self.entry.options.get(CONF_EVENTS_PIN)
         if port and pin:
