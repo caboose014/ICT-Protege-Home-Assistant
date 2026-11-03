@@ -12,7 +12,14 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
 from .const import CONF_PIN, CONF_RECORDS
-from .hub import CONTROLLER_MODULE, ProtegeHub, link_child_devices, records_to_data, remove_stale_devices
+from .hub import (
+    CONTROLLER_MODULE,
+    ProtegeHub,
+    async_name_records,
+    link_child_devices,
+    records_to_data,
+    remove_stale_devices,
+)
 from .protege import ProtegeClient, ProtegeError
 
 _LOGGER = logging.getLogger(__name__)
@@ -46,6 +53,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ProtegeConfigEntry) -> b
         except ProtegeError as err:
             await client.disconnect()
             raise ConfigEntryNotReady(f"Discovery failed: {err}") from err
+        await async_name_records(hass, entry, records)
         data = records_to_data(records)
         if data != entry.data.get(CONF_RECORDS):
             hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_RECORDS: data})

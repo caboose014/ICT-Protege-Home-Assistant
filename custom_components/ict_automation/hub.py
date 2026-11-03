@@ -8,8 +8,10 @@ from collections.abc import Callable
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_HOST
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
 
 from .const import (
@@ -17,6 +19,10 @@ from .const import (
     CONF_EVENTS_PORT,
     CONF_PIN,
     CONF_RECORDS,
+    CONF_WX_PASSWORD,
+    CONF_WX_PORT,
+    CONF_WX_USERNAME,
+    DEFAULT_WX_PORT,
     DOMAIN,
     EVENT_PANEL,
     MANUFACTURER,
@@ -30,6 +36,7 @@ from .protege import (
     RecordType,
     StatusUpdate,
 )
+from .protege.wx import WXClient, WXError, apply_names
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,11 +44,46 @@ CONTROLLER_MODULE = "CP001"
 
 
 def records_to_data(records: list[Record]) -> list[dict[str, Any]]:
-    return [{"type": r.record_type.value, "index": r.index, "reference": r.reference} for r in records]
+    out = []
+    for r in records:
+        item: dict[str, Any] = {"type": r.record_type.value, "index": r.index, "reference": r.reference}
+        if r.name:
+            item["name"] = r.name
+        out.append(item)
+    return out
 
 
 def records_from_data(data: list[dict[str, Any]]) -> list[Record]:
-    return [Record(RecordType(d["type"]), int(d["index"]), d.get("reference")) for d in data]
+    return [Record(RecordType(d["type"]), int(d["index"]), d.get("reference"), d.get("name")) for d in data]
+
+
+async def async_name_records(hass: HomeAssistant, entry: ConfigEntry, records: list[Record]) -> None:
+    """Give freshly discovered records their names.
+
+    Names saved from the last successful read are applied first, then refreshed from
+    the WX web interface when an operator login is configured.
+    """
+    saved = {r.key: r.name for r in records_from_data(entry.data.get(CONF_RECORDS, [])) if r.name}
+    for record in records:
+        record.name = record.name or saved.get(record.key)
+    username = entry.options.get(CONF_WX_USERNAME)
+    password = entry.options.get(CONF_WX_PASSWORD)
+    if not username or not password:
+        return
+    client = WXClient(
+        async_get_clientsession(hass, verify_ssl=False),
+        entry.data[CONF_HOST],
+        username,
+        password,
+        int(entry.options.get(CONF_WX_PORT, DEFAULT_WX_PORT)),
+    )
+    try:
+        lists = await client.fetch_all()
+    except WXError as err:
+        _LOGGER.warning("Could not read names from the WX web interface: %s", err)
+        return
+    named = apply_names(records, lists)
+    _LOGGER.debug("Named %d records from the WX web interface", named)
 
 
 class ProtegeHub:

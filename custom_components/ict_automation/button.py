@@ -11,7 +11,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from . import ProtegeConfigEntry
 from .const import CONF_RECORDS, DOMAIN
 from .entity import ProtegeEntity
-from .hub import ProtegeHub, records_to_data
+from .hub import ProtegeHub, async_name_records, records_to_data
 from .protege import ProtegeError, RecordType
 
 
@@ -49,6 +49,7 @@ class ProtegeRescanButton(ButtonEntity):
                 translation_key="command_failed",
                 translation_placeholders={"error": str(err)},
             ) from err
+        await async_name_records(self.hass, self.hub.entry, records)
         data = records_to_data(records)
         entry = self.hub.entry
         if data != entry.data.get(CONF_RECORDS):

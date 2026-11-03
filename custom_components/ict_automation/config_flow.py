@@ -10,21 +10,28 @@ from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResu
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import callback
 from homeassistant.helpers import selector
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     CONF_EVENTS_PIN,
     CONF_EVENTS_PORT,
     CONF_PIN,
     CONF_RECORDS,
+    CONF_WX_PASSWORD,
+    CONF_WX_PORT,
+    CONF_WX_USERNAME,
     DEFAULT_PORT,
+    DEFAULT_WX_PORT,
     DOMAIN,
 )
 from .hub import records_to_data
-from .protege import CannotConnect, InvalidPin, ProtegeClient, ProtegeError, ProtegeEventClient
+from .protege import CannotConnect, InvalidPin, ProtegeClient, ProtegeError, ProtegeEventClient, RecordType
+from .protege.wx import WXAuthError, WXClient, WXError
 
 _LOGGER = logging.getLogger(__name__)
 
 PIN_SELECTOR = selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD))
+PASSWORD_SELECTOR = PIN_SELECTOR
 PORT_SELECTOR = selector.NumberSelector(
     selector.NumberSelectorConfig(min=1, max=65535, mode=selector.NumberSelectorMode.BOX)
 )
@@ -113,15 +120,69 @@ class ProtegeConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class ProtegeOptionsFlow(OptionsFlow):
-    """Optional event logging through a second, view-only ACS service."""
+    """Names from the WX web interface, and optional event logging on a second service."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        return self.async_show_menu(step_id="init", menu_options=["names", "events"])
+
+    def _save(self, changes: dict[str, Any]) -> ConfigFlowResult:
+        options = {k: v for k, v in {**self.config_entry.options, **changes}.items() if v not in (None, "")}
+        return self.async_create_entry(data=options)
+
+    async def async_step_names(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            username = (user_input.get(CONF_WX_USERNAME) or "").strip()
+            password = user_input.get(CONF_WX_PASSWORD) or ""
+            port = int(user_input.get(CONF_WX_PORT) or DEFAULT_WX_PORT)
+            if not username and not password:
+                return self._save({CONF_WX_USERNAME: None, CONF_WX_PASSWORD: None, CONF_WX_PORT: None})
+            if not username or not password:
+                errors["base"] = "wx_incomplete"
+            else:
+                client = WXClient(
+                    async_get_clientsession(self.hass, verify_ssl=False),
+                    self.config_entry.data[CONF_HOST],
+                    username,
+                    password,
+                    port,
+                )
+                try:
+                    await client.login()
+                    await client.list(RecordType.DOOR)
+                except WXAuthError:
+                    errors["base"] = "wx_invalid_auth"
+                except WXError as err:
+                    _LOGGER.debug("WX check failed: %s", err)
+                    errors["base"] = "wx_cannot_connect"
+                else:
+                    # Saving reloads the entry, which reads the names.
+                    return self._save(
+                        {CONF_WX_USERNAME: username, CONF_WX_PASSWORD: password, CONF_WX_PORT: port}
+                    )
+                finally:
+                    await client.logout()
+        current = user_input or self.config_entry.options
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_WX_USERNAME, description={"suggested_value": current.get(CONF_WX_USERNAME)}
+                ): str,
+                vol.Optional(
+                    CONF_WX_PASSWORD, description={"suggested_value": current.get(CONF_WX_PASSWORD)}
+                ): PASSWORD_SELECTOR,
+                vol.Optional(CONF_WX_PORT, default=current.get(CONF_WX_PORT, DEFAULT_WX_PORT)): PORT_SELECTOR,
+            }
+        )
+        return self.async_show_form(step_id="names", data_schema=schema, errors=errors)
+
+    async def async_step_events(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
             port = user_input.get(CONF_EVENTS_PORT)
             pin = user_input.get(CONF_EVENTS_PIN)
             if not port and not pin:
-                return self.async_create_entry(data={})
+                return self._save({CONF_EVENTS_PORT: None, CONF_EVENTS_PIN: None})
             if not port or not pin:
                 errors["base"] = "events_incomplete"
             elif int(port) == self.config_entry.data[CONF_PORT]:
@@ -136,9 +197,7 @@ class ProtegeOptionsFlow(OptionsFlow):
                         errors = {CONF_EVENTS_PIN: "invalid_pin"}
                 else:
                     await client.stop()
-                    return self.async_create_entry(
-                        data={CONF_EVENTS_PORT: int(port), CONF_EVENTS_PIN: str(pin)}
-                    )
+                    return self._save({CONF_EVENTS_PORT: int(port), CONF_EVENTS_PIN: str(pin)})
         current = user_input or self.config_entry.options
         schema = vol.Schema(
             {
@@ -152,4 +211,4 @@ class ProtegeOptionsFlow(OptionsFlow):
                 ): PIN_SELECTOR,
             }
         )
-        return self.async_show_form(step_id="init", data_schema=schema, errors=errors)
+        return self.async_show_form(step_id="events", data_schema=schema, errors=errors)
