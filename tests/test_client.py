@@ -218,3 +218,28 @@ async def test_badge_unlock_shows_even_when_panel_only_pushes_the_door_opening(p
     panel.doors[1] = [0x00, 0x00]  # relocks on its timer without a push
     await _wait_until(lambda: client.status[(RecordType.DOOR, 1)].locked)
     await client.stop()
+
+
+async def test_pushed_status_is_acked(panel):
+    """The panel resends unacked pushes and can hold back later ones."""
+    client = ProtegeClient("127.0.0.1", panel.port, "1234")
+    await client.connect()
+    records = await client.discover()
+    await client.start(records)
+    before = panel.acks_received
+    panel.set_input(3, 1)
+    await _wait_until(lambda: panel.acks_received > before)
+    await client.stop()
+
+
+async def test_event_block_accepted_in_either_byte_order(panel):
+    events = []
+    client = ProtegeEventClient("127.0.0.1", panel.port, "4321")
+    client.add_listener(events.append)
+    await client.open()
+    raw = p.build_data_packet([((0x30, 0x01), b"Thu 10:48:54 User Warren Entry Granted D2\x00")])
+    panel.sessions[0].writer.write(raw)
+    await _wait_until(lambda: events)
+    assert events[0].text.startswith("Thu 10:48:54")
+    await _wait_until(lambda: panel.acks_received > 0)
+    await client.stop()

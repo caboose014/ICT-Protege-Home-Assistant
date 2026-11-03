@@ -42,6 +42,7 @@ class FakePanel:
         self.troubles = {1: ["CP001:01", 0, 0]}
         self.serial = 0x00A1B2C3
         self.commands: list[tuple[int, int, int]] = []
+        self.acks_received = 0
         self.sessions: list[_Session] = []
         self._server: asyncio.base_events.Server | None = None
         self.port = 0
@@ -117,6 +118,8 @@ class FakePanel:
             while chunk := await reader.read(4096):
                 for raw in assembler.feed(chunk):
                     packet = p.parse_packet(raw)
+                    if packet.is_ack:
+                        self.acks_received += 1
                     if packet.packet_type == p.PKT_TYPE_COMMAND:
                         if self.monitor_delay and packet.data[:2] == bytes((p.GROUP_SYSTEM, p.SYS_MONITOR)):
                             await asyncio.sleep(self.monitor_delay)
