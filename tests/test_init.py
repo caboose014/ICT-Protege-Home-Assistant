@@ -48,20 +48,38 @@ async def test_devices_and_entities(hass: HomeAssistant, entry) -> None:
     assert entry.state is ConfigEntryState.LOADED
     dev_reg = dr.async_get(hass)
     names = {d.name for d in dr.async_entries_for_config_entry(dev_reg, entry.entry_id)}
-    assert names == {"Protege WX", "Door 1", "Door 2", "Area 1", "ZX001"}
+    assert names == {
+        "Protege WX",
+        "Door 1",
+        "Door 2",
+        "Area 1",
+        "ZX001",
+        "Input CP001:01",
+        "Input CP001:02",
+        "Input ZX001:01",
+        "Output CP001:01",
+        "Output CP001:02",
+    }
     controller = dev_reg.async_get_device(identifiers={(DOMAIN, "00A1B2C3")})
     assert controller.sw_version == "WX 4.00.1676"
     door = dev_reg.async_get_device(identifiers={(DOMAIN, "00A1B2C3_door_1")})
     assert door.via_device_id == controller.id
+    # Inputs and outputs are their own devices, so each can go in its own HA area.
+    zx_module = dev_reg.async_get_device(identifiers={(DOMAIN, "00A1B2C3_module_ZX001")})
+    zx_input = dev_reg.async_get_device(identifiers={(DOMAIN, "00A1B2C3_input_3")})
+    assert zx_module.via_device_id == controller.id
+    assert zx_input.via_device_id == zx_module.id
+    cp_output = dev_reg.async_get_device(identifiers={(DOMAIN, "00A1B2C3_output_1")})
+    assert cp_output.via_device_id == controller.id
 
     assert hass.states.get("lock.door_1").state == "locked"
     assert hass.states.get("binary_sensor.door_1_contact").state == "off"
     assert hass.states.get("sensor.door_1_door_state").state == "closed"
     assert hass.states.get("alarm_control_panel.area_1").state == "disarmed"
-    assert hass.states.get("binary_sensor.protege_wx_input_cp001_01").state == "off"
-    assert hass.states.get("binary_sensor.zx001_input_zx001_01").state == "off"
-    assert hass.states.get("switch.protege_wx_output_cp001_01").state == "off"
-    assert hass.states.get("switch.protege_wx_input_cp001_02_bypass").state == "off"
+    assert hass.states.get("binary_sensor.input_cp001_01").state == "off"
+    assert hass.states.get("binary_sensor.input_zx001_01").state == "off"
+    assert hass.states.get("switch.output_cp001_01").state == "off"
+    assert hass.states.get("switch.input_cp001_02_bypass").state == "off"
     ent_reg = er.async_get(hass)
     trouble = ent_reg.async_get("binary_sensor.protege_wx_trouble_input_cp001_01")
     assert trouble.disabled_by is er.RegistryEntryDisabler.INTEGRATION
@@ -69,7 +87,7 @@ async def test_devices_and_entities(hass: HomeAssistant, entry) -> None:
 
 async def test_input_push_update(hass: HomeAssistant, entry, panel: FakePanel) -> None:
     panel.set_input(3, 1)
-    await _settle(hass, lambda: hass.states.get("binary_sensor.zx001_input_zx001_01").state == "on")
+    await _settle(hass, lambda: hass.states.get("binary_sensor.input_zx001_01").state == "on")
 
 
 async def test_lock_unlock_and_open(hass: HomeAssistant, entry, panel: FakePanel) -> None:
@@ -120,23 +138,23 @@ async def test_arming_uses_the_persons_code(hass: HomeAssistant, entry, panel: F
 
 async def test_outputs_and_bypass(hass: HomeAssistant, entry, panel: FakePanel) -> None:
     await hass.services.async_call(
-        "switch", "turn_on", {"entity_id": "switch.protege_wx_output_cp001_01"}, blocking=True
+        "switch", "turn_on", {"entity_id": "switch.output_cp001_01"}, blocking=True
     )
-    await _settle(hass, lambda: hass.states.get("switch.protege_wx_output_cp001_01").state == "on")
+    await _settle(hass, lambda: hass.states.get("switch.output_cp001_01").state == "on")
     await hass.services.async_call(
         DOMAIN,
         "turn_on_for",
-        {"entity_id": "switch.protege_wx_output_cp001_02", "duration": 30},
+        {"entity_id": "switch.output_cp001_02", "duration": 30},
         blocking=True,
     )
     assert (p.GROUP_OUTPUT, p.OUTPUT_ON_TIMED, 2) in panel.commands
     await hass.services.async_call(
         DOMAIN,
         "bypass",
-        {"entity_id": "switch.protege_wx_input_cp001_02_bypass", "permanent": True},
+        {"entity_id": "switch.input_cp001_02_bypass", "permanent": True},
         blocking=True,
     )
-    await _settle(hass, lambda: hass.states.get("switch.protege_wx_input_cp001_02_bypass").state == "on")
+    await _settle(hass, lambda: hass.states.get("switch.input_cp001_02_bypass").state == "on")
     assert (p.GROUP_INPUT, p.INPUT_BYPASS_PERMANENT, 2) in panel.commands
 
 

@@ -52,8 +52,7 @@ class ProtegeInputState(ProtegeEntity, SensorEntity):
     _attr_entity_registry_enabled_default = False
 
     def __init__(self, hub, record) -> None:
-        super().__init__(hub, record, "input_state", hub.module_device(record.module))
-        self._attr_translation_placeholders = {"name": record.default_name}
+        super().__init__(hub, record, "input_state", hub.record_device(record))
 
     @property
     def native_value(self) -> str | None:

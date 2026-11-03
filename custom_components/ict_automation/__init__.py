@@ -12,7 +12,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
 from .const import CONF_PIN, CONF_RECORDS
-from .hub import ProtegeHub, link_child_devices, records_to_data, remove_stale_devices
+from .hub import CONTROLLER_MODULE, ProtegeHub, link_child_devices, records_to_data, remove_stale_devices
 from .protege import ProtegeClient, ProtegeError
 
 _LOGGER = logging.getLogger(__name__)
@@ -54,7 +54,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ProtegeConfigEntry) -> b
     entry.runtime_data = hub
     await hub.async_start()
     remove_stale_devices(hass, hub)
-    dr.async_get(hass).async_get_or_create(config_entry_id=entry.entry_id, **hub.controller_device)
+    dev_reg = dr.async_get(hass)
+    dev_reg.async_get_or_create(config_entry_id=entry.entry_id, **hub.controller_device)
+    # Expansion modules hold no entities themselves; inputs and outputs link to them.
+    for module in sorted({r.module for r in hub.records if r.module and r.module != CONTROLLER_MODULE}):
+        dev_reg.async_get_or_create(config_entry_id=entry.entry_id, **hub.module_device(module))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     link_child_devices(hass, hub)

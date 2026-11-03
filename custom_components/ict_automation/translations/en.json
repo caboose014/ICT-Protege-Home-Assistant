@@ -111,7 +111,7 @@
         }
       },
       "input_state": {
-        "name": "{name} state",
+        "name": "State",
         "state": {
           "closed": "Closed",
           "open": "Open",
@@ -122,7 +122,7 @@
     },
     "switch": {
       "bypass": {
-        "name": "{name} bypass"
+        "name": "Bypass"
       }
     }
   },
