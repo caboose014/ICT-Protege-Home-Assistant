@@ -20,7 +20,7 @@ class ProtegeEntity(Entity):
     def __init__(self, hub: ProtegeHub, record: Record, key: str, device: DeviceInfo) -> None:
         self.hub = hub
         self.record = record
-        self._attr_unique_id = f"{hub.serial}_{record.record_type.value}_{record.index}_{key}"
+        self._attr_unique_id = f"{hub.record_device_id(record)}_{key}"
         self._attr_device_info = device
 
     @property
