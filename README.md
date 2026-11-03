@@ -43,7 +43,10 @@ Everything here is done in the Protege WX web interface.
 
 ### 1. Web interface operator (everyone)
 
-1. Make sure HTTPS is enabled on the controller (firmware 4.00.1676 or later).
+1. Turn on HTTPS: go to **System > System Settings > General**, tick **Use HTTPS** and leave the HTTPS port at `443`.
+   Changing these fields needs a power cycle of the controller. Firmware 4.00.1676 or later is required.
+
+   <img src="docs/images/ict-https.png" width="700" alt="System Settings, General tab: Use HTTPS ticked, HTTPS port 443">
 2. Create a role for Home Assistant, then an operator with that role. Use it only for Home Assistant, not for people.
    Leaving *Operator Timeout* on is fine: if the panel ends the session, the integration logs in again on its own.
 
