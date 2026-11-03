@@ -199,6 +199,10 @@ class Record:
     index: int
     reference: str | None = None
     name: str | None = None
+    # Inputs only, from the WX web interface (None when unknown): the areas (ACS indexes)
+    # the input belongs to, and those where it may be left open when arming.
+    areas: list[int] | None = None
+    arm_open: list[int] | None = None
 
     @property
     def key(self) -> tuple[RecordType, int]:

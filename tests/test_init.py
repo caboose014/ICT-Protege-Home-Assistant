@@ -13,7 +13,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.ict_automation.const import CONF_PIN, DOMAIN
+from custom_components.ict_automation.const import CONF_PIN, CONF_RECORDS, DOMAIN
 from custom_components.ict_automation.protege import protocol as p
 
 from .fake_panel import FakePanel
@@ -226,3 +226,157 @@ async def test_arm_modes_can_be_turned_off_per_area(hass: HomeAssistant, entry) 
     await hass.async_block_till_done()
     assert hass.states.get(night).state == "off"
     assert hass.states.get(panel_id).attributes["supported_features"] == 3
+
+
+@pytest.fixture
+async def zoned_entry(hass: HomeAssistant, panel: FakePanel):
+    """An entry whose inputs' areas were read from the web interface earlier.
+
+    Input 1 must be closed to arm, input 2 may stay open, input 3 is in no area.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        unique_id="00A1B2C3",
+        data={
+            CONF_HOST: "127.0.0.1",
+            CONF_PORT: panel.port,
+            CONF_PIN: "1234",
+            CONF_RECORDS: [
+                {
+                    "type": "input",
+                    "index": 1,
+                    "reference": "CP001:01",
+                    "name": "Hall PIR",
+                    "areas": [1],
+                    "arm_open": [],
+                },
+                {
+                    "type": "input",
+                    "index": 2,
+                    "reference": "CP001:02",
+                    "name": "Garage Door",
+                    "areas": [1],
+                    "arm_open": [1],
+                },
+                {
+                    "type": "input",
+                    "index": 3,
+                    "reference": "ZX001:01",
+                    "name": "Shed",
+                    "areas": [],
+                    "arm_open": [],
+                },
+            ],
+        },
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    yield entry
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_open_zones_count_only_zones_that_must_close(
+    hass: HomeAssistant, zoned_entry, panel: FakePanel
+) -> None:
+    ready, count = "binary_sensor.area_1_ready_to_arm", "sensor.area_1_open_zones"
+    await _settle(hass, lambda: hass.states.get(ready).state == "on")
+    assert hass.states.get(count).state == "0"
+
+    panel.set_input(2, 1)  # allowed open when arming
+    panel.set_input(3, 1)  # not in the area
+    await _settle(hass, lambda: hass.states.get("binary_sensor.hall_pir").state == "off")
+    await hass.async_block_till_done()
+    assert hass.states.get(ready).state == "on"
+
+    panel.set_input(1, 1)
+    await _settle(hass, lambda: hass.states.get(ready).state == "off")
+    assert hass.states.get(count).state == "1"
+    assert hass.states.get(count).attributes["zones"] == ["Hall PIR"]
+
+
+async def test_failed_arm_names_the_open_zones(hass: HomeAssistant, zoned_entry, panel: FakePanel) -> None:
+    panel.must_close = {1}
+    panel.set_input(1, 1)
+    await _settle(hass, lambda: hass.states.get("binary_sensor.area_1_ready_to_arm").state == "off")
+    with pytest.raises(HomeAssistantError, match="Hall PIR"):
+        await hass.services.async_call(
+            "alarm_control_panel",
+            "alarm_arm_away",
+            {"entity_id": "alarm_control_panel.area_1", "code": "5678"},
+            blocking=True,
+        )
+    assert hass.states.get("alarm_control_panel.area_1").state == "disarmed"
+
+
+async def test_alarm_cause_is_the_zone_that_tripped(
+    hass: HomeAssistant, zoned_entry, panel: FakePanel
+) -> None:
+    cause = "sensor.area_1_alarm_cause"
+    assert hass.states.get(cause).state == "unknown"
+    panel.areas[1] = [0x80, 0x00, 0x00]
+    panel.push(p.GROUP_AREA, 1)
+    panel.set_input(1, 1)
+    await _settle(hass, lambda: hass.states.get("binary_sensor.hall_pir").state == "on")
+    panel.areas[1] = [0x80, 0x00, 0x01]  # alarm
+    panel.push(p.GROUP_AREA, 1)
+    await _settle(hass, lambda: hass.states.get(cause).state == "Hall PIR")
+    panel.set_input(1, 0)
+    panel.areas[1] = [0x00, 0x00, 0x00]  # disarmed
+    panel.push(p.GROUP_AREA, 1)
+    await _settle(hass, lambda: hass.states.get(cause).state == "unknown")
+
+
+async def test_no_zone_sensors_without_zone_settings(hass: HomeAssistant, entry) -> None:
+    assert hass.states.get("binary_sensor.area_1_ready_to_arm") is None
+    assert hass.states.get("sensor.area_1_open_zones") is None
+    assert hass.states.get("sensor.area_1_alarm_cause") is not None
+
+
+async def test_duress_raises_a_repair_until_handled(hass: HomeAssistant, panel: FakePanel) -> None:
+    from homeassistant.helpers import issue_registry as ir
+
+    from custom_components.ict_automation.const import CONF_EVENTS_PIN, CONF_EVENTS_PORT
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        unique_id="00A1B2C3",
+        data={CONF_HOST: "127.0.0.1", CONF_PORT: panel.port, CONF_PIN: "1234"},
+        options={CONF_EVENTS_PORT: panel.port, CONF_EVENTS_PIN: "4321"},
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    fired = []
+    hass.bus.async_listen(f"{DOMAIN}_emergency", fired.append)
+    issues = ir.async_get(hass)
+
+    def emergencies():
+        return [i for (domain, _), i in issues.issues.items() if domain == DOMAIN]
+
+    await _settle(hass, lambda: any(s.events for s in panel.sessions))
+    panel.push_event("User\x00Jordan Duress Alarm At Keypad 1")
+    await _settle(hass, lambda: fired)
+    assert fired[0].data["kind"] == "duress"
+    [issue] = emergencies()
+    assert issue.severity == ir.IssueSeverity.CRITICAL
+    assert issue.is_fixable
+
+    panel.push_event("Door\x00Front Door Unlocked By REX")
+    await asyncio.sleep(0.2)
+    assert len(fired) == 1
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+def test_emergency_kinds() -> None:
+    from custom_components.ict_automation.hub import emergency_kind
+
+    assert emergency_kind("Area House Panic Alarm") == "panic"
+    assert emergency_kind("User Jane Hold-Up") == "panic"
+    assert emergency_kind("Keypad 1 Medical Alarm") == "medical"
+    assert emergency_kind("Input Garage Opened") is None
+    assert emergency_kind(None) is None

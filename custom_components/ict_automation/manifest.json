@@ -3,7 +3,7 @@
   "name": "ICT Protege",
   "codeowners": ["@caboose014"],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": ["repairs"],
   "documentation": "https://github.com/caboose014/ICT-Protege-Home-Assistant",
   "integration_type": "hub",
   "iot_class": "local_push",
