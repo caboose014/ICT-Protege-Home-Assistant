@@ -25,7 +25,6 @@ _CATEGORIES = {
     "input": "input",
     "output": "output",
     "user": "user",
-    "area": "armed",
     "trouble": "trouble",
 }
 
