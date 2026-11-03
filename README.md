@@ -57,10 +57,20 @@ Everything here is done in the Protege WX web interface.
 | Your panel | Rights the role needs |
 | --- | --- |
 | Has the control service | **View** programming only. The operator only reads names and zone settings, once at start-up and on Rescan, then logs out. |
-| Web interface only | View status and the event log, plus **control** of the areas, doors, outputs and inputs (bypass) you want to use from Home Assistant. No programming or user management rights. |
+| Web interface only | The **Monitoring** rights for the kinds of record Home Assistant should see and control (see below). No wizard, user management or reporting rights. |
 
-   For web-only mode, tick these under **Monitoring**: **Events**, **Doors**, **Inputs**, **Areas**, **Outputs** and
-   **Trouble Inputs**. Leave the Wizards, Users and Reporting boxes unticked.
+   For web-only mode, tick these under **Monitoring**. Each box covers every record of that kind, not individual ones:
+
+   | Box | Needed for |
+   | --- | --- |
+   | Events | Everything (changes are picked up from the event log) |
+   | Doors | Locks, door sensors and momentary unlock |
+   | Inputs | Input sensors, tamper, bypass, open zones and ready to arm |
+   | Areas | Alarm panels |
+   | Trouble Inputs | Trouble sensors and the controller's Fault sensor |
+   | Outputs | Output switches. Optional: this lets the operator switch **every** output, including sirens and bells, so leave it off unless you need outputs in Home Assistant |
+
+   Leave the Wizards, Users and Reporting boxes unticked.
 
    <img src="docs/images/ict-role.png" width="700" alt="Roles, User role: Monitoring rights for events, doors, inputs and areas">
 
