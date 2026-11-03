@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import struct
 from dataclasses import dataclass, field
 from enum import IntEnum, StrEnum
@@ -335,13 +336,19 @@ def event_user(event: PanelEvent) -> str | None:
     return text[:cut].strip() or None if cut > 0 else None
 
 
+# Card numbers in event text, e.g. "... Using User By Card [Card 321:5]". They are
+# left out so they don't end up in HA's history, where they could help clone a card.
+_CARD_NUMBER = re.compile(r"\s*\[Card [^\]]*\]")
+
+
 def decode_event(block: p.ICTDataBlock) -> PanelEvent | None:
     # The spec's tables give these as high byte 0x30, but its packet layouts put 0x30 first,
     # so accept either byte order.
     if block.data_type in (p.DATA_EVENT_TEXT, p.DATA_EVENT_TEXT[::-1]):
         # Some panels separate the fields with NULs; join them rather than keep only the first.
         # On site: b"Door\x00Front Door Unlocked By REX\x00".
-        raw = [part.strip() for part in block.body.decode("ascii", errors="replace").split("\x00")]
+        body = block.body.decode("ascii", errors="replace")
+        raw = [_CARD_NUMBER.sub("", part).strip() for part in body.split("\x00")]
         parts = [part for part in raw if part]
         if not parts:
             return None
