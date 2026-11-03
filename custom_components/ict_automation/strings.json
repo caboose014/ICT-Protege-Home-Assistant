@@ -10,39 +10,40 @@
         }
       },
       "user": {
-        "title": "How should Home Assistant connect to your ICT Protege?",
-        "menu_options": {
-          "acs": "Automation and Control service (recommended, needs the Automation licence)",
-          "web": "Web interface only (no licence needed)"
-        }
-      },
-      "acs": {
-        "title": "Automation and Control service",
-        "description": "Uses the panel's Automation and Control service. Every door, area, input and output is found automatically.",
+        "title": "Connect to your ICT Protege",
+        "description": "Enter the controller's address and a WX web interface operator created just for Home Assistant. HTTPS must be enabled on the controller (firmware 4.00.1676 or later).\n\nHome Assistant then looks for the Automation and Control service. If it answers, it is used for control (pushed live, and arm codes are checked by the panel) and the operator only reads names, so it only needs to view programming. If it doesn't, everything goes through the web interface, so give the operator's role rights to view status and the event log and to control only the areas, doors and outputs you want.",
         "data": {
           "host": "Host",
-          "port": "Automation and Control port",
-          "pin": "Integration PIN"
+          "username": "Operator name",
+          "password": "Operator password",
+          "port": "HTTPS port",
+          "control_port": "Automation and Control port"
         },
         "data_description": {
           "host": "IP address or hostname of the Protege controller.",
-          "port": "The IP Port set on the Automation and Control service (usually 21000).",
+          "port": "Usually 443.",
+          "control_port": "The IP Port of the Automation and Control service, if your controller has the Automation licence (usually 21000)."
+        }
+      },
+      "acs": {
+        "title": "Automation and Control service found",
+        "description": "The control service answered on port {port}, so it will be used for control. {names}",
+        "data": {
+          "pin": "Integration PIN",
+          "use_web": "Use the web interface only instead"
+        },
+        "data_description": {
           "pin": "A user PIN with rights to doors, outputs and bypass. It does not need arm or disarm rights: arming always asks for the person's own code."
         }
       },
       "web": {
         "title": "Web interface only",
-        "description": "For controllers without the Automation and Integration licence. If yours has it, go back and choose the Automation and Control service instead: it is pushed live, while the web interface has to be polled every couple of seconds.\n\nCreate a WX operator just for Home Assistant, with rights to view status and the event log and to control only the areas, doors and outputs you want. Don't give it programming or user management rights. A session timeout of about 15 minutes is a good choice. HTTPS must be enabled (firmware 4.00.1676 or later).",
+        "description": "No Automation and Control service answered on port {port}, so Home Assistant will work through the web interface. It polls the event log every couple of seconds. If your controller has the Automation licence, go back and check the service is enabled and started instead.\n\nThe web interface arms as the operator and never sees a code, so choose how codes work.",
         "data": {
-          "host": "Host",
-          "port": "HTTPS port",
-          "username": "Operator name",
-          "password": "Operator password",
           "code_mode": "Arming codes"
         },
         "data_description": {
-          "port": "Usually 443.",
-          "code_mode": "The web interface arms as the operator and never sees a code, so Home Assistant checks it. Add people and their codes under Configure afterwards."
+          "code_mode": "With codes checked in Home Assistant, add people and their codes under Configure afterwards."
         }
       },
       "reauth_confirm": {
@@ -68,7 +69,9 @@
       "invalid_pin": "The panel rejected this PIN.",
       "panel_error": "The panel refused a request. Check that \"Allow Status Requests When Not Logged In\" is enabled on the service, and the logs for details.",
       "unknown": "Unexpected error. See the logs for details.",
-      "web_invalid_auth": "The web interface rejected this operator name or password."
+      "web_invalid_auth": "The web interface rejected this operator name or password.",
+      "nothing_found": "Couldn't reach the web interface on that HTTPS port, and no Automation and Control service answered. Check the address and ports.",
+      "pin_required": "Enter the integration PIN, or tick the web interface option."
     },
     "abort": {
       "already_configured": "This panel is already set up.",
@@ -83,7 +86,9 @@
         "title": "Options",
         "menu_options": {
           "names": "Names and zone settings (WX web interface)",
-          "events": "Event logging"
+          "events": "Event logging",
+          "codes": "Arming codes",
+          "upgrade": "Switch to the Automation and Control service"
         }
       },
       "names": {
@@ -118,12 +123,23 @@
         "data_description": {
           "add_code": "At least 4 digits. Stored only as a salted hash."
         }
+      },
+      "upgrade": {
+        "title": "Switch to the Automation and Control service",
+        "description": "If the controller now has the Automation licence and the service is set up, switch over: control becomes pushed live and arming codes are checked by the panel instead of Home Assistant. Your devices, entities and their history are kept, and the web operator carries on reading names and zone settings once at start-up. The integration stays on the control service from then on.",
+        "data": {
+          "port": "Automation and Control port",
+          "pin": "Integration PIN"
+        },
+        "data_description": {
+          "pin": "A user PIN with rights to doors, outputs and bypass. It does not need arm or disarm rights: arming always asks for the person's own code."
+        }
       }
     },
     "error": {
-      "cannot_connect": "Could not connect to the events service port.",
+      "cannot_connect": "Could not connect. Check the host, the port, and that the Automation and Control service is enabled.",
       "invalid_pin": "The panel rejected this PIN.",
-      "panel_error": "The panel refused the event subscription.",
+      "panel_error": "The panel refused a request. Check that \"Allow Status Requests When Not Logged In\" is enabled on the service, and the logs for details.",
       "events_incomplete": "Enter both the port and the PIN, or leave both empty.",
       "events_same_port": "Use a separate service and port for events, not the control service.",
       "unknown": "Unexpected error. See the logs for details.",
@@ -132,7 +148,11 @@
       "wx_cannot_connect": "Could not reach the web interface over HTTPS on that port.",
       "code_incomplete": "Enter both a name and a code.",
       "code_too_short": "Use at least 4 digits.",
-      "code_name_taken": "That person already has a code. Remove it first to change it."
+      "code_name_taken": "That person already has a code. Remove it first to change it.",
+      "wrong_panel": "That control service belongs to a different panel."
+    },
+    "abort": {
+      "upgraded": "Switched to the Automation and Control service."
     }
   },
   "entity": {
@@ -295,6 +315,34 @@
             "title": "{kind} alarm",
             "description": "The panel reported: {text}\n\nSubmit to mark it handled."
           }
+        }
+      }
+    },
+    "acs_available": {
+      "title": "Automation and Control service found for {title}",
+      "fix_flow": {
+        "step": {
+          "upgrade": {
+            "title": "Switch to the Automation and Control service",
+            "description": "The control service answered on port {port}. If the controller now has the Automation licence and the service is set up, switch over: control becomes pushed live and arming codes are checked by the panel instead of Home Assistant. Your devices, entities and their history are kept, and the web operator carries on reading names and zone settings once at start-up. The integration stays on the control service from then on.",
+            "data": {
+              "port": "Automation and Control port",
+              "pin": "Integration PIN"
+            },
+            "data_description": {
+              "pin": "A user PIN with rights to doors, outputs and bypass. It does not need arm or disarm rights: arming always asks for the person's own code."
+            }
+          }
+        },
+        "error": {
+          "cannot_connect": "Could not connect. Check the host, the port, and that the Automation and Control service is enabled.",
+          "invalid_pin": "The panel rejected this PIN.",
+          "panel_error": "The panel refused a request. Check that \"Allow Status Requests When Not Logged In\" is enabled on the service, and the logs for details.",
+          "unknown": "Unexpected error. See the logs for details.",
+          "wrong_panel": "That control service belongs to a different panel."
+        },
+        "abort": {
+          "entry_missing": "This panel is no longer set up."
         }
       }
     }

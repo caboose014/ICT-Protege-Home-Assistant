@@ -11,8 +11,9 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from . import ProtegeConfigEntry
 from .const import CONF_RECORDS, DOMAIN
 from .entity import ProtegeEntity
-from .hub import ProtegeHub, async_name_records, records_to_data
+from .hub import ProtegeHub, async_discover_records, records_to_data
 from .protege import ProtegeError, RecordType
+from .upgrade import async_check_control_service
 
 
 async def async_setup_entry(
@@ -42,15 +43,19 @@ class ProtegeRescanButton(ButtonEntity):
 
     async def async_press(self) -> None:
         try:
-            records = await self.hub.client.discover()
+            if self.hub.web:
+                records = await self.hub.client.discover()
+            else:
+                records = await async_discover_records(self.hass, self.hub.entry, self.hub.client)
         except ProtegeError as err:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="command_failed",
                 translation_placeholders={"error": str(err)},
             ) from err
-        if not self.hub.web:  # the web interface already gave names and zone settings
-            await async_name_records(self.hass, self.hub.entry, records)
+        if self.hub.web:
+            # See if the control service is there now.
+            await async_check_control_service(self.hass, self.hub.entry)
         data = records_to_data(records)
         entry = self.hub.entry
         if data != entry.data.get(CONF_RECORDS):

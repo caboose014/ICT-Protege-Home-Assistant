@@ -20,10 +20,12 @@ from .const import (
     CONF_CODE_MODE,
     CONF_CODES,
     CONF_CONNECTION,
+    CONF_CONTROL_PORT,
     CONF_EVENTS_PIN,
     CONF_EVENTS_PORT,
     CONF_PIN,
     CONF_RECORDS,
+    CONF_USE_WEB,
     CONF_WX_PASSWORD,
     CONF_WX_PORT,
     CONF_WX_USERNAME,
@@ -33,10 +35,11 @@ from .const import (
     DEFAULT_WX_PORT,
     DOMAIN,
 )
-from .hub import records_to_data
+from .hub import records_from_data, records_to_data
 from .protege import CannotConnect, InvalidPin, ProtegeClient, ProtegeError, ProtegeEventClient, RecordType
 from .protege.web import ProtegeWebClient, WebAuthError
 from .protege.wx import WXAuthError, WXClient, WXError
+from .upgrade import WrongPanel, async_upgrade, control_port, control_service_answers
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,17 +60,36 @@ def _schema(defaults: dict[str, Any]) -> vol.Schema:
     )
 
 
-async def _validate(data: dict[str, Any]) -> tuple[str | None, str, list[dict[str, Any]]]:
-    """Connect, check the PIN, and discover records. Returns (serial, title, records)."""
+async def _validate(
+    data: dict[str, Any], listed: dict[RecordType, list[int]] | None = None
+) -> tuple[str | None, str, list[dict[str, Any]]]:
+    """Connect, check the PIN, and discover records. Returns (serial, title, records).
+
+    `listed` is the web interface's record IDs, so discovery can tell how the panel numbers records.
+    """
     client = ProtegeClient(data[CONF_HOST], int(data[CONF_PORT]), data[CONF_PIN])
     info = await client.connect()
     try:
         await client.verify_pin()
-        records = await client.discover()
+        records = await client.discover(listed=listed)
     finally:
         await client.disconnect()
     title = f"Protege {info.firmware_type or 'WX'} ({data[CONF_HOST]})"
     return info.serial_str, title, records_to_data(records)
+
+
+def _user_schema(defaults: dict[str, Any]) -> vol.Schema:
+    return vol.Schema(
+        {
+            vol.Required(CONF_HOST, default=defaults.get(CONF_HOST, "")): str,
+            vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME, "")): str,
+            vol.Required(CONF_PASSWORD, default=defaults.get(CONF_PASSWORD, "")): PASSWORD_SELECTOR,
+            vol.Required(CONF_PORT, default=defaults.get(CONF_PORT, DEFAULT_WX_PORT)): PORT_SELECTOR,
+            vol.Required(
+                CONF_CONTROL_PORT, default=defaults.get(CONF_CONTROL_PORT, DEFAULT_PORT)
+            ): PORT_SELECTOR,
+        }
+    )
 
 
 CODE_MODE_SELECTOR = selector.SelectSelector(
@@ -123,36 +145,151 @@ def _errors_for(err: Exception) -> dict[str, str]:
     return {"base": "unknown"}
 
 
+def upgrade_schema(defaults: dict[str, Any], port: int) -> vol.Schema:
+    return vol.Schema(
+        {
+            vol.Required(CONF_PORT, default=defaults.get(CONF_PORT, port)): PORT_SELECTOR,
+            vol.Required(CONF_PIN): PIN_SELECTOR,
+        }
+    )
+
+
+def upgrade_errors(err: Exception) -> dict[str, str]:
+    if isinstance(err, WrongPanel):
+        return {"base": "wrong_panel"}
+    return _errors_for(err)
+
+
 class ProtegeConfigFlow(ConfigFlow, domain=DOMAIN):
     """Set up an ICT Protege panel."""
 
     VERSION = 2
 
-    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """ACS when the controller has the licence (recommended), else the web interface."""
-        return self.async_show_menu(step_id="user", menu_options=["acs", "web"])
+    def __init__(self) -> None:
+        self._login: dict[str, Any] = {}
+        self._web: tuple[str | None, str, list[dict[str, Any]]] | None = None
+        self._web_error: Exception | None = None
 
-    async def async_step_web(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Address and web operator, then look for the Automation and Control service.
+
+        The control service is used when it answers (it needs the Automation licence);
+        otherwise everything goes through the web interface.
+        """
         errors: dict[str, str] = {}
         if user_input is not None:
-            user_input[CONF_PORT] = int(user_input[CONF_PORT])
-            user_input[CONF_USERNAME] = user_input[CONF_USERNAME].strip()
-            self._async_abort_entries_match({CONF_HOST: user_input[CONF_HOST]})
+            login = {
+                CONF_HOST: user_input[CONF_HOST].strip(),
+                CONF_PORT: int(user_input[CONF_PORT]),
+                CONF_USERNAME: user_input[CONF_USERNAME].strip(),
+                CONF_PASSWORD: user_input[CONF_PASSWORD],
+                CONF_CONTROL_PORT: int(user_input[CONF_CONTROL_PORT]),
+            }
+            self._async_abort_entries_match({CONF_HOST: login[CONF_HOST]})
+            self._web, self._web_error = None, None
             try:
-                serial, title, records = await _validate_web(self.hass, user_input)
+                self._web = await _validate_web(self.hass, login)
             except Exception as err:  # noqa: BLE001
-                errors = _errors_for(err)
+                self._web_error = err
+            # A wrong operator login is always worth fixing first.
+            if isinstance(self._web_error, WebAuthError):
+                errors = _errors_for(self._web_error)
             else:
-                if serial:
-                    await self.async_set_unique_id(serial)
-                    self._abort_if_unique_id_configured()
-                code_mode = user_input.pop(CONF_CODE_MODE)
-                return self.async_create_entry(
-                    title=title,
-                    data={**user_input, CONF_CONNECTION: CONNECTION_WEB, CONF_RECORDS: records},
-                    options={CONF_CODE_MODE: code_mode},
-                )
-        return self.async_show_form(step_id="web", data_schema=_web_schema(user_input or {}), errors=errors)
+                self._login = login
+                if await control_service_answers(login[CONF_HOST], login[CONF_CONTROL_PORT]):
+                    return await self.async_step_acs()
+                if isinstance(self._web_error, CannotConnect):
+                    errors = {"base": "nothing_found"}
+                elif self._web_error is not None:
+                    errors = _errors_for(self._web_error)
+                else:
+                    return await self.async_step_web()
+        return self.async_show_form(step_id="user", data_schema=_user_schema(user_input or {}), errors=errors)
+
+    async def async_step_acs(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """The control service answered: ask for the integration PIN."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            if user_input.get(CONF_USE_WEB):
+                if self._web is not None:
+                    return await self.async_step_web()
+                errors = _errors_for(self._web_error or CannotConnect())
+            elif not user_input.get(CONF_PIN):
+                errors[CONF_PIN] = "pin_required"
+            else:
+                data = {
+                    CONF_HOST: self._login[CONF_HOST],
+                    CONF_PORT: self._login[CONF_CONTROL_PORT],
+                    CONF_PIN: str(user_input[CONF_PIN]),
+                }
+                listed: dict[RecordType, list[int]] | None = None
+                if self._web is not None:
+                    listed = {}
+                    for r in records_from_data(self._web[2]):
+                        listed.setdefault(r.record_type, []).append(r.index)
+                try:
+                    serial, title, records = await _validate(data, listed)
+                except Exception as err:  # noqa: BLE001
+                    errors = _errors_for(err)
+                else:
+                    if serial:
+                        await self.async_set_unique_id(serial)
+                        self._abort_if_unique_id_configured()
+                    # The same operator reads names and zone settings (one login at start-up).
+                    options = (
+                        {
+                            CONF_WX_USERNAME: self._login[CONF_USERNAME],
+                            CONF_WX_PASSWORD: self._login[CONF_PASSWORD],
+                            CONF_WX_PORT: self._login[CONF_PORT],
+                        }
+                        if self._web is not None
+                        else {}
+                    )
+                    return self.async_create_entry(
+                        title=title,
+                        data={**data, CONF_CONNECTION: CONNECTION_ACS, CONF_RECORDS: records},
+                        options=options,
+                    )
+        schema = vol.Schema(
+            {
+                vol.Optional(CONF_PIN): PIN_SELECTOR,
+                vol.Optional(CONF_USE_WEB, default=False): selector.BooleanSelector(),
+            }
+        )
+        names = (
+            "Names and zone settings will be read with the web operator."
+            if self._web is not None
+            else "The web interface could not be reached, so names come from module references "
+            "until you set an operator under Configure."
+        )
+        return self.async_show_form(
+            step_id="acs",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={"port": str(self._login[CONF_CONTROL_PORT]), "names": names},
+        )
+
+    async def async_step_web(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Web interface only: choose how arming codes work."""
+        assert self._web is not None
+        if user_input is not None:
+            serial, title, records = self._web
+            if serial:
+                await self.async_set_unique_id(serial)
+                self._abort_if_unique_id_configured()
+            # The control port is kept so the integration can offer the upgrade when it starts answering.
+            data = dict(self._login)
+            return self.async_create_entry(
+                title=title,
+                data={**data, CONF_CONNECTION: CONNECTION_WEB, CONF_RECORDS: records},
+                options={CONF_CODE_MODE: user_input[CONF_CODE_MODE]},
+            )
+        schema = vol.Schema({vol.Required(CONF_CODE_MODE, default=CODE_MODE_HA): CODE_MODE_SELECTOR})
+        return self.async_show_form(
+            step_id="web",
+            data_schema=schema,
+            description_placeholders={"port": str(self._login[CONF_CONTROL_PORT])},
+        )
 
     async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
         return await self.async_step_reauth_confirm()
@@ -176,24 +313,6 @@ class ProtegeConfigFlow(ConfigFlow, domain=DOMAIN):
             }
         )
         return self.async_show_form(step_id="reauth_confirm", data_schema=schema, errors=errors)
-
-    async def async_step_acs(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            user_input[CONF_PORT] = int(user_input[CONF_PORT])
-            self._async_abort_entries_match({CONF_HOST: user_input[CONF_HOST]})
-            try:
-                serial, title, records = await _validate(user_input)
-            except Exception as err:  # noqa: BLE001
-                errors = _errors_for(err)
-            else:
-                if serial:
-                    await self.async_set_unique_id(serial)
-                    self._abort_if_unique_id_configured()
-                return self.async_create_entry(
-                    title=title, data={**user_input, CONF_CONNECTION: CONNECTION_ACS, CONF_RECORDS: records}
-                )
-        return self.async_show_form(step_id="acs", data_schema=_schema(user_input or {}), errors=errors)
 
     async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         entry = self._get_reconfigure_entry()
@@ -234,7 +353,7 @@ class ProtegeOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if self.config_entry.data.get(CONF_CONNECTION) == CONNECTION_WEB:
             # Names and events already come from the web interface.
-            return await self.async_step_codes()
+            return self.async_show_menu(step_id="init", menu_options=["codes", "upgrade"])
         return self.async_show_menu(step_id="init", menu_options=["names", "events"])
 
     async def async_step_codes(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
@@ -275,6 +394,24 @@ class ProtegeOptionsFlow(OptionsFlow):
             data_schema=schema,
             errors=errors,
             description_placeholders={"people": ", ".join(names) or "none yet"},
+        )
+
+    async def async_step_upgrade(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Move onto the Automation and Control service, keeping entities and their history."""
+        entry = self.config_entry
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            port = int(user_input[CONF_PORT])
+            try:
+                await async_upgrade(self.hass, entry, port, str(user_input[CONF_PIN]))
+            except Exception as err:  # noqa: BLE001
+                errors = upgrade_errors(err)
+            else:
+                return self.async_abort(reason="upgraded")
+        return self.async_show_form(
+            step_id="upgrade",
+            data_schema=upgrade_schema(user_input or {}, control_port(entry)),
+            errors=errors,
         )
 
     def _save(self, changes: dict[str, Any]) -> ConfigFlowResult:

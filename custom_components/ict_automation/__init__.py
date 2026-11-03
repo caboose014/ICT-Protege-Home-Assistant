@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_USERNAME, Platform
@@ -11,18 +13,20 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 
 from .const import CONF_CONNECTION, CONF_PIN, CONF_RECORDS, CONNECTION_WEB, DOMAIN
 from .hub import (
     ProtegeHub,
-    async_name_records,
+    async_discover_records,
     link_child_devices,
     records_to_data,
     remove_stale_devices,
 )
 from .protege import ProtegeClient, ProtegeError
 from .protege.web import ProtegeWebClient, WebAuthError
+from .upgrade import CHECK_INTERVAL, async_check_control_service
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -81,7 +85,9 @@ async def _async_setup_web_client(hass: HomeAssistant, entry: ProtegeConfigEntry
 
 async def async_setup_entry(hass: HomeAssistant, entry: ProtegeConfigEntry) -> bool:
     if is_web(entry):
-        return await _async_finish_setup(hass, entry, await _async_setup_web_client(hass, entry))
+        await _async_finish_setup(hass, entry, await _async_setup_web_client(hass, entry))
+        _watch_for_control_service(hass, entry)
+        return True
     client = ProtegeClient(entry.data[CONF_HOST], entry.data[CONF_PORT], entry.data[CONF_PIN])
     try:
         await client.connect()
@@ -93,15 +99,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ProtegeConfigEntry) -> b
         if entry.unique_id is None and client.panel.serial_str:
             hass.config_entries.async_update_entry(entry, unique_id=client.panel.serial_str)
         try:
-            records = await client.discover()
+            records = await async_discover_records(hass, entry, client)
         except ProtegeError as err:
             await client.disconnect()
             raise ConfigEntryNotReady(f"Discovery failed: {err}") from err
-        await async_name_records(hass, entry, records)
         data = records_to_data(records)
         if data != entry.data.get(CONF_RECORDS):
             hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_RECORDS: data})
     return await _async_finish_setup(hass, entry, client)
+
+
+def _watch_for_control_service(hass: HomeAssistant, entry: ProtegeConfigEntry) -> None:
+    """Web-only mode: now and then, look for the control service and offer the upgrade under Repairs.
+
+    Once on the control service the integration stays there; it never falls back to the web.
+    """
+
+    async def check(_now: Any = None) -> None:
+        await async_check_control_service(hass, entry)
+
+    entry.async_create_background_task(hass, check(), f"{DOMAIN} control service check")
+    entry.async_on_unload(async_track_time_interval(hass, check, timedelta(seconds=CHECK_INTERVAL)))
 
 
 async def _async_finish_setup(

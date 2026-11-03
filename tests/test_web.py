@@ -20,6 +20,9 @@ from custom_components.ict_automation.const import (
     CONF_CODE_MODE,
     CONF_CODES,
     CONF_CONNECTION,
+    CONF_CONTROL_PORT,
+    CONF_PIN,
+    CONNECTION_ACS,
     CONNECTION_WEB,
     DOMAIN,
 )
@@ -275,15 +278,18 @@ async def _setup(hass, entry):
 
 async def test_config_flow_web(hass: HomeAssistant, controller) -> None:
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "web"})
-    data = {CONF_HOST: "127.0.0.1", CONF_PORT: controller.port, CONF_USERNAME: USERNAME}
+    assert result["step_id"] == "user"
+    # Nothing answers on the control port (1), so it carries on through the web interface.
+    data = {CONF_HOST: "127.0.0.1", CONF_PORT: controller.port, CONF_USERNAME: USERNAME, CONF_CONTROL_PORT: 1}
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {**data, CONF_PASSWORD: "wrong", CONF_CODE_MODE: CODE_MODE_HA}
+        result["flow_id"], {**data, CONF_PASSWORD: "wrong"}
     )
     assert result["errors"] == {"base": "web_invalid_auth"}
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {**data, CONF_PASSWORD: PASSWORD, CONF_CODE_MODE: CODE_MODE_HA}
+        result["flow_id"], {**data, CONF_PASSWORD: PASSWORD}
     )
+    assert result["step_id"] == "web"
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_CODE_MODE: CODE_MODE_HA})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     entry = result["result"]
     assert entry.unique_id == "C227FCC1"
@@ -294,6 +300,8 @@ async def test_config_flow_web(hass: HomeAssistant, controller) -> None:
 
     # Options: add a person's code.
     result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] is FlowResultType.MENU
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "codes"})
     assert result["step_id"] == "codes"
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {CONF_CODE_MODE: CODE_MODE_HA, "add_name": "Jordan", "add_code": "12"}
@@ -360,3 +368,80 @@ async def test_rejected_operator_asks_to_reauthenticate(hass: HomeAssistant, con
     flows = hass.config_entries.flow.async_progress_by_handler(DOMAIN)
     assert flows and flows[0]["context"]["source"] == config_entries.SOURCE_REAUTH
     assert controller.failed_logins == 1
+
+
+@pytest.mark.parametrize("display_order", [False, True])
+async def test_upgrade_to_control_service_keeps_entities(
+    hass: HomeAssistant, controller, display_order: bool
+) -> None:
+    """A web-only install finds the control service later and moves onto it, keeping its entities.
+
+    By default the control service numbers records by record ID, like the web interface;
+    with ACPUseDisplayOrder it numbers them 1, 2, 3 and the entities are renumbered.
+    """
+    from homeassistant.helpers import entity_registry as er
+    from homeassistant.helpers import issue_registry as ir
+
+    from .fake_panel import FakePanel
+
+    panel = FakePanel()
+    # The same panel as the fake web interface.
+    panel.serial = 0xC227FCC1
+    if display_order:
+        panel.doors = {1: [0, 0], 2: [0, 0]}
+        panel.areas = {1: [0, 0, 0], 2: [0, 0, 0]}
+        panel.inputs = {1: ["ZX001:01", 0, 0], 2: ["ZX002:01", 0, 0]}
+        panel.outputs = {1: ["CP001:01", 0]}
+        panel.troubles = {1: ["CP001:01", 0, 0]}
+    else:
+        panel.doors = {0: [0, 0], 1: [0, 0]}
+        panel.areas = {0: [0, 0, 0], 16: [0, 0, 0]}
+        panel.inputs = {0: ["ZX001:01", 0, 0], 14: ["ZX002:01", 0, 0]}
+        panel.outputs = {112: ["CP001:01", 0]}
+        panel.troubles = {191: ["CP001:01", 0, 0]}
+    await panel.start()
+    try:
+        entry = _entry(controller, {CONF_CODE_MODE: CODE_MODE_NONE})
+        entry.add_to_hass(hass)
+        hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_CONTROL_PORT: panel.port})
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        issues = ir.async_get(hass)
+        await _settle(
+            hass, lambda: issues.async_get_issue(DOMAIN, f"acs_available_{entry.entry_id}") is not None
+        )
+
+        ent_reg = er.async_get(hass)
+        before = {e.entity_id for e in er.async_entries_for_config_entry(ent_reg, entry.entry_id)}
+        gallery = next(e for e in before if e.startswith("binary_sensor.gallery_pir"))
+        assert ent_reg.async_get(gallery).unique_id.startswith("C227FCC1_input_14_")
+
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        assert result["type"] is FlowResultType.MENU
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"next_step_id": "upgrade"}
+        )
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {CONF_PORT: panel.port, CONF_PIN: "0000"}
+        )
+        assert result["errors"] == {CONF_PIN: "invalid_pin"}
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {CONF_PORT: panel.port, CONF_PIN: "1234"}
+        )
+        assert result["type"] is FlowResultType.ABORT
+        assert result["reason"] == "upgraded"
+        await hass.async_block_till_done()
+
+        assert entry.data[CONF_CONNECTION] == CONNECTION_ACS
+        assert entry.options["wx_username"] == USERNAME
+        assert issues.async_get_issue(DOMAIN, f"acs_available_{entry.entry_id}") is None
+        assert not controller.sessions  # the web session was closed
+        new_index = 2 if display_order else 14
+        assert ent_reg.async_get(gallery).unique_id.startswith(f"C227FCC1_input_{new_index}_")
+        after = {e.entity_id for e in er.async_entries_for_config_entry(ent_reg, entry.entry_id)}
+        assert before <= after
+        assert hass.states.get("lock.front_door").state == "locked"
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+    finally:
+        await panel.stop()
