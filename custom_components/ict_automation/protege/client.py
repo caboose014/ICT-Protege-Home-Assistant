@@ -397,6 +397,12 @@ class ProtegeClient:
             self.status[(update.record_type, update.index)] = update.status
             if update.record_type is RecordType.DOOR:
                 self._watch_door(update.index, previous, update.status)
+            elif (
+                update.record_type is RecordType.OUTPUT and previous is not None and previous != update.status
+            ):
+                # Unlocks made by another system while logged in (Savant, a keypad) are not
+                # pushed, but the door's lock output is. Read the doors back.
+                self.watch_doors()
             record = self.records.get((update.record_type, update.index))
             if record is not None and record.reference is None:
                 record.reference = getattr(update.status, "reference", None) or None
