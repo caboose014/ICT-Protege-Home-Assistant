@@ -854,8 +854,15 @@ class ProtegeEventClient:
         try:
             async with self._conn.lock:
                 await self._conn.command(p.build_login(self.pin))
-                await self._conn.command(p.build_set_login_time(6000))
-                await self._conn.command(p.build_request_events(start=True, human_readable=True))
+                # Some firmware rejects these; the service may already be set to send events.
+                for raw, what in (
+                    (p.build_set_login_time(6000), "login time"),
+                    (p.build_request_events(start=True, human_readable=True), "event request"),
+                ):
+                    try:
+                        await self._conn.command(raw)
+                    except CommandRejected as err:
+                        _LOGGER.debug("Events service rejected the %s: %s", what, err)
         except (ProtegeError, ValueError):
             await self._conn.close()
             raise

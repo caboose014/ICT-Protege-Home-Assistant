@@ -309,7 +309,9 @@ def decode_event(block: p.ICTDataBlock) -> PanelEvent | None:
     # The spec's tables give these as high byte 0x30, but its packet layouts put 0x30 first,
     # so accept either byte order.
     if block.data_type in (p.DATA_EVENT_TEXT, p.DATA_EVENT_TEXT[::-1]):
-        return PanelEvent(text=block.body.split(b"\x00", 1)[0].decode("ascii", errors="replace").strip())
+        # Some panels separate the fields with NULs; join them rather than keep only the first.
+        parts = [part.strip() for part in block.body.decode("ascii", errors="replace").split("\x00")]
+        return PanelEvent(text=" ".join(part for part in parts if part))
     if block.data_type in (p.DATA_EVENT_NUMERIC, p.DATA_EVENT_NUMERIC[::-1]) and len(block.body) >= 2:
         return PanelEvent(code=struct.unpack("<H", block.body[:2])[0], data=bytes(block.body[2:8]))
     return None
