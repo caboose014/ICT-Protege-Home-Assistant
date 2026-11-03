@@ -21,6 +21,7 @@ from .const import (
     CONF_CONNECTION,
     CONF_EVENTS_PIN,
     CONF_EVENTS_PORT,
+    CONF_NUMBERING,
     CONF_PIN,
     CONF_RECORDS,
     CONF_WX_PASSWORD,
@@ -152,6 +153,10 @@ async def _async_read_site(hass: HomeAssistant, entry: ConfigEntry) -> WXSite | 
         return None
 
 
+def record_id_prefix(serial: str, record_type: RecordType, index: int, by_record_id: bool) -> str:
+    return f"{serial}_{record_type.value}_{'id' if by_record_id else ''}{index}"
+
+
 class ProtegeHub:
     """Connection owner for one config entry."""
 
@@ -231,8 +236,20 @@ class ProtegeHub:
             model=f"Protege {record.record_type.value}",
         )
 
+    @property
+    def by_record_id(self) -> bool:
+        """Whether records are numbered by record ID (web interface, or the control service without
+        ACPUseDisplayOrder) rather than 1, 2, 3 in display order."""
+        return self.web or self.entry.data.get(CONF_NUMBERING) == NUMBERING_RECORD_ID
+
     def record_device_id(self, record: Record) -> str:
-        return f"{self.serial}_{record.record_type.value}_{record.index}"
+        """Also the prefix of the record's entity unique IDs.
+
+        Record IDs get an "id" marker, so a record numbered one way can never take over
+        the entity of a different record numbered the other way (door 1 by display order is
+        not door ID 1).
+        """
+        return record_id_prefix(self.serial, record.record_type, record.index, self.by_record_id)
 
     @property
     def modules(self) -> set[str]:

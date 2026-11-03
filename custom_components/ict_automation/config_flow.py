@@ -23,6 +23,7 @@ from .const import (
     CONF_CONTROL_PORT,
     CONF_EVENTS_PIN,
     CONF_EVENTS_PORT,
+    CONF_NUMBERING,
     CONF_PIN,
     CONF_RECORDS,
     CONF_USE_WEB,
@@ -62,8 +63,8 @@ def _schema(defaults: dict[str, Any]) -> vol.Schema:
 
 async def _validate(
     data: dict[str, Any], listed: dict[RecordType, list[int]] | None = None
-) -> tuple[str | None, str, list[dict[str, Any]]]:
-    """Connect, check the PIN, and discover records. Returns (serial, title, records).
+) -> tuple[str | None, str, list[dict[str, Any]], str]:
+    """Connect, check the PIN, and discover records. Returns (serial, title, records, numbering).
 
     `listed` is the web interface's record IDs, so discovery can tell how the panel numbers records.
     """
@@ -75,7 +76,7 @@ async def _validate(
     finally:
         await client.disconnect()
     title = f"Protege {info.firmware_type or 'WX'} ({data[CONF_HOST]})"
-    return info.serial_str, title, records_to_data(records)
+    return info.serial_str, title, records_to_data(records), client.numbering
 
 
 def _user_schema(defaults: dict[str, Any]) -> vol.Schema:
@@ -228,7 +229,7 @@ class ProtegeConfigFlow(ConfigFlow, domain=DOMAIN):
                     for r in records_from_data(self._web[2]):
                         listed.setdefault(r.record_type, []).append(r.index)
                 try:
-                    serial, title, records = await _validate(data, listed)
+                    serial, title, records, numbering = await _validate(data, listed)
                 except Exception as err:  # noqa: BLE001
                     errors = _errors_for(err)
                 else:
@@ -247,7 +248,12 @@ class ProtegeConfigFlow(ConfigFlow, domain=DOMAIN):
                     )
                     return self.async_create_entry(
                         title=title,
-                        data={**data, CONF_CONNECTION: CONNECTION_ACS, CONF_RECORDS: records},
+                        data={
+                            **data,
+                            CONF_CONNECTION: CONNECTION_ACS,
+                            CONF_NUMBERING: numbering,
+                            CONF_RECORDS: records,
+                        },
                         options=options,
                     )
         schema = vol.Schema(
@@ -321,17 +327,22 @@ class ProtegeConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             user_input[CONF_PORT] = int(user_input[CONF_PORT])
             try:
+                extra: dict[str, Any] = {}
                 if web:
                     serial, _title, records = await _validate_web(self.hass, {**entry.data, **user_input})
                 else:
-                    serial, _title, records = await _validate(user_input)
+                    listed: dict[RecordType, list[int]] = {}
+                    for r in records_from_data(entry.data.get(CONF_RECORDS, [])):
+                        listed.setdefault(r.record_type, []).append(r.index)
+                    serial, _title, records, numbering = await _validate(user_input, listed or None)
+                    extra[CONF_NUMBERING] = numbering
             except Exception as err:  # noqa: BLE001
                 errors = _errors_for(err)
             else:
                 if serial and entry.unique_id and serial != entry.unique_id:
                     return self.async_abort(reason="wrong_panel")
                 return self.async_update_reload_and_abort(
-                    entry, data_updates={**user_input, CONF_RECORDS: records}
+                    entry, data_updates={**user_input, **extra, CONF_RECORDS: records}
                 )
         return self.async_show_form(
             step_id="reconfigure_web" if web else "reconfigure",
@@ -496,6 +507,7 @@ class ProtegeOptionsFlow(OptionsFlow):
                 ): PORT_SELECTOR,
                 vol.Optional(
                     CONF_EVENTS_PIN,
+                    CONF_NUMBERING,
                     description={"suggested_value": current.get(CONF_EVENTS_PIN)},
                 ): PIN_SELECTOR,
             }

@@ -414,7 +414,7 @@ async def test_upgrade_to_control_service_keeps_entities(
         ent_reg = er.async_get(hass)
         before = {e.entity_id for e in er.async_entries_for_config_entry(ent_reg, entry.entry_id)}
         gallery = next(e for e in before if e.startswith("binary_sensor.gallery_pir"))
-        assert ent_reg.async_get(gallery).unique_id.startswith("C227FCC1_input_14_")
+        assert ent_reg.async_get(gallery).unique_id.startswith("C227FCC1_input_id14_")
 
         result = await hass.config_entries.options.async_init(entry.entry_id)
         assert result["type"] is FlowResultType.MENU
@@ -436,8 +436,9 @@ async def test_upgrade_to_control_service_keeps_entities(
         assert entry.options["wx_username"] == USERNAME
         assert issues.async_get_issue(DOMAIN, f"acs_available_{entry.entry_id}") is None
         assert not controller.sessions  # the web session was closed
-        new_index = 2 if display_order else 14
-        assert ent_reg.async_get(gallery).unique_id.startswith(f"C227FCC1_input_{new_index}_")
+        new_prefix = "input_2" if display_order else "input_id14"
+        assert ent_reg.async_get(gallery).unique_id.startswith(f"C227FCC1_{new_prefix}_")
+        assert entry.data["numbering"] == ("display_order" if display_order else "record_id")
         after = {e.entity_id for e in er.async_entries_for_config_entry(ent_reg, entry.entry_id)}
         assert before <= after
         assert hass.states.get("lock.front_door").state == "locked"
@@ -445,3 +446,23 @@ async def test_upgrade_to_control_service_keeps_entities(
         await hass.async_block_till_done()
     finally:
         await panel.stop()
+
+
+async def test_record_ids_never_take_over_display_order_entities(hass: HomeAssistant, controller) -> None:
+    """Re-adding a panel in web-only mode must not pick up old entities for a different door.
+
+    Display order numbers the Jail Gate door 2 and the Front Door door 1; by record ID the
+    Front Door is 0 and the Jail Gate 1. A leftover display-order door 1 entity must stay apart.
+    """
+    from homeassistant.helpers import entity_registry as er
+
+    ent_reg = er.async_get(hass)
+    old = ent_reg.async_get_or_create("lock", DOMAIN, "C227FCC1_door_1_lock", suggested_object_id="main_door")
+    entry = _entry(controller, {CONF_CODE_MODE: CODE_MODE_NONE})
+    await _setup(hass, entry)
+    jail_gate = ent_reg.async_get_entity_id("lock", DOMAIN, "C227FCC1_door_id1_lock")
+    assert jail_gate is not None
+    assert jail_gate != old.entity_id
+    assert hass.states.get(jail_gate).name == "Jail Gate"
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()

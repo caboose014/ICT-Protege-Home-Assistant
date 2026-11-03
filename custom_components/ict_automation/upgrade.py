@@ -24,6 +24,7 @@ from homeassistant.helpers.storage import Store
 from .const import (
     CONF_CONNECTION,
     CONF_CONTROL_PORT,
+    CONF_NUMBERING,
     CONF_PIN,
     CONF_RECORDS,
     CONF_WX_PASSWORD,
@@ -33,7 +34,7 @@ from .const import (
     DEFAULT_PORT,
     DOMAIN,
 )
-from .hub import records_from_data, records_to_data
+from .hub import record_id_prefix, records_from_data, records_to_data
 from .protege import ProtegeClient, ProtegeError, Record, RecordType
 from .protege.client import NUMBERING_RECORD_ID
 
@@ -111,13 +112,15 @@ def index_map(web: list[Record], acs: list[Record]) -> dict[tuple[RecordType, in
     return mapping
 
 
-def _renumber(serial: str, mapping: dict[tuple[RecordType, int], int]) -> dict[str, str]:
-    """Old record prefix → new prefix, e.g. 'SER_input_14' → 'SER_input_1'."""
-    return {
-        f"{serial}_{record_type.value}_{old}": f"{serial}_{record_type.value}_{new}"
+def _renumber(serial: str, mapping: dict[tuple[RecordType, int], int], by_record_id: bool) -> dict[str, str]:
+    """Old record prefix → new prefix, e.g. 'SER_input_id14' → 'SER_input_2' (display order)."""
+    renames = {
+        record_id_prefix(serial, record_type, old, True): record_id_prefix(
+            serial, record_type, new, by_record_id
+        )
         for (record_type, old), new in mapping.items()
-        if old != new
     }
+    return {old: new for old, new in renames.items() if old != new}
 
 
 def _rename(old_id: str, prefixes: dict[str, str]) -> str | None:
@@ -183,7 +186,8 @@ async def async_upgrade(hass: HomeAssistant, entry: ConfigEntry, port: int, pin:
 
     serial = entry.unique_id or info.serial_str or entry.entry_id
     await hass.config_entries.async_unload(entry.entry_id)
-    _migrate_registries(hass, entry, _renumber(serial, mapping))
+    by_record_id = client.numbering == NUMBERING_RECORD_ID
+    _migrate_registries(hass, entry, _renumber(serial, mapping, by_record_id))
     await Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.session").async_remove()
     ir.async_delete_issue(hass, DOMAIN, issue_id(entry))
 
@@ -200,6 +204,7 @@ async def async_upgrade(hass: HomeAssistant, entry: ConfigEntry, port: int, pin:
             CONF_PORT: port,
             CONF_PIN: pin,
             CONF_CONNECTION: CONNECTION_ACS,
+            CONF_NUMBERING: client.numbering,
             CONF_RECORDS: records_to_data(records),
         },
         options=options,

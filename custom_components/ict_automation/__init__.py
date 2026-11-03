@@ -16,7 +16,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 
-from .const import CONF_CONNECTION, CONF_PIN, CONF_RECORDS, CONNECTION_WEB, DOMAIN
+from .const import CONF_CONNECTION, CONF_NUMBERING, CONF_PIN, CONF_RECORDS, CONNECTION_WEB, DOMAIN
 from .hub import (
     ProtegeHub,
     async_discover_records,
@@ -103,9 +103,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ProtegeConfigEntry) -> b
         except ProtegeError as err:
             await client.disconnect()
             raise ConfigEntryNotReady(f"Discovery failed: {err}") from err
-        data = records_to_data(records)
-        if data != entry.data.get(CONF_RECORDS):
-            hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_RECORDS: data})
+        data = {**entry.data, CONF_RECORDS: records_to_data(records), CONF_NUMBERING: client.numbering}
+        if data != entry.data:
+            hass.config_entries.async_update_entry(entry, data=data)
     return await _async_finish_setup(hass, entry, client)
 
 

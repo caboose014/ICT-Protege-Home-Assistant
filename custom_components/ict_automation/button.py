@@ -9,7 +9,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import ProtegeConfigEntry
-from .const import CONF_RECORDS, DOMAIN
+from .const import CONF_NUMBERING, CONF_RECORDS, DOMAIN
 from .entity import ProtegeEntity
 from .hub import ProtegeHub, async_discover_records, records_to_data
 from .protege import ProtegeError, RecordType
@@ -56,11 +56,13 @@ class ProtegeRescanButton(ButtonEntity):
         if self.hub.web:
             # See if the control service is there now.
             await async_check_control_service(self.hass, self.hub.entry)
-        data = records_to_data(records)
         entry = self.hub.entry
-        if data != entry.data.get(CONF_RECORDS):
+        data = {**entry.data, CONF_RECORDS: records_to_data(records)}
+        if not self.hub.web:
+            data[CONF_NUMBERING] = self.hub.client.numbering
+        if data != entry.data:
             # The update listener reloads the entry with the new records.
-            self.hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_RECORDS: data})
+            self.hass.config_entries.async_update_entry(entry, data=data)
 
 
 class ProtegeDoorMomentaryButton(ProtegeEntity, ButtonEntity):
