@@ -255,6 +255,8 @@ class PanelInfo:
 @dataclass
 class PanelEvent:
     text: str | None = None
+    category: str | None = None  # first field of a human readable event, e.g. "Door", "Input"
+    description: str | None = None
     code: int | None = None
     data: bytes = field(default=b"")
 
@@ -310,8 +312,14 @@ def decode_event(block: p.ICTDataBlock) -> PanelEvent | None:
     # so accept either byte order.
     if block.data_type in (p.DATA_EVENT_TEXT, p.DATA_EVENT_TEXT[::-1]):
         # Some panels separate the fields with NULs; join them rather than keep only the first.
+        # On site: b"Door\x00Front Door Unlocked By REX\x00".
         parts = [part.strip() for part in block.body.decode("ascii", errors="replace").split("\x00")]
-        return PanelEvent(text=" ".join(part for part in parts if part))
+        parts = [part for part in parts if part]
+        if not parts:
+            return None
+        category = parts[0] if len(parts) > 1 else None
+        description = " ".join(parts[1:]) if len(parts) > 1 else parts[0]
+        return PanelEvent(text=" ".join(parts), category=category, description=description)
     if block.data_type in (p.DATA_EVENT_NUMERIC, p.DATA_EVENT_NUMERIC[::-1]) and len(block.body) >= 2:
         return PanelEvent(code=struct.unpack("<H", block.body[:2])[0], data=bytes(block.body[2:8]))
     return None

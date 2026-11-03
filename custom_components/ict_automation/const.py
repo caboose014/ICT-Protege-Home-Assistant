@@ -28,6 +28,9 @@ EVENT_TYPES = [
     "disarmed",
     "alarm",
     "door",
+    "input",
+    "output",
+    "user",
     "trouble",
     "other",
 ]

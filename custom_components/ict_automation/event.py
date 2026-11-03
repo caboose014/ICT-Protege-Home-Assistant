@@ -17,16 +17,32 @@ _KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ("disarmed", ("disarm",)),
     ("armed", ("armed", "arming")),
     ("alarm", ("alarm",)),
-    ("door", ("door", "forced", "left open")),
     ("trouble", ("trouble", "fail", "tamper", "battery", "offline")),
 ]
+# The panel's first event field is a category; map it when no keyword above applies.
+_CATEGORIES = {
+    "door": "door",
+    "input": "input",
+    "output": "output",
+    "user": "user",
+    "area": "armed",
+    "trouble": "trouble",
+}
 
 
-def classify(text: str | None) -> str:
-    lowered = (text or "").lower()
+def classify(event: PanelEvent) -> str:
+    category = (event.category or "").strip().lower()
+    description = (event.description or event.text or "").lower()
+    if category in ("output", "input") and "alarm" not in description and "tamper" not in description:
+        # "Output ... By Door Front Door" is about the output, not the door.
+        return category
     for event_type, words in _KEYWORDS:
-        if any(word in lowered for word in words):
+        if any(word in description for word in words):
             return event_type
+    if category in _CATEGORIES:
+        return _CATEGORIES[category]
+    if any(word in description for word in ("door", "forced", "left open")):
+        return "door"
     return "other"
 
 
@@ -54,5 +70,8 @@ class ProtegePanelEvent(EventEntity):
 
     @callback
     def _handle(self, event: PanelEvent) -> None:
-        self._trigger_event(classify(event.text), {"text": event.text, "code": event.code})
+        self._trigger_event(
+            classify(event),
+            {"text": event.text, "category": event.category, "code": event.code},
+        )
         self.async_write_ha_state()
