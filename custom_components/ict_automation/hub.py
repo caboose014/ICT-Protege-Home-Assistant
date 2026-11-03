@@ -236,8 +236,18 @@ class ProtegeHub:
     def _on_event(self, event: PanelEvent) -> None:
         self.hass.bus.async_fire(
             EVENT_PANEL,
-            {"entry_id": self.entry.entry_id, "text": event.text, "code": event.code},
+            {
+                "entry_id": self.entry.entry_id,
+                "text": event.text,
+                "category": event.category,
+                "user": event.user,
+                "code": event.code,
+            },
         )
+        if "door" in (event.text or "").lower():
+            # Changes made by other systems (keypads, Savant, cards) are not always pushed on
+            # the control connection; the event is a cue to read the doors back.
+            self.client.watch_doors()
         for listener in list(self._event_listeners):
             listener(event)
 

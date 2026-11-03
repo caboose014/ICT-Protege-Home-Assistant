@@ -403,6 +403,23 @@ class ProtegeClient:
             for listener in list(self._status_listeners):
                 listener(update)
 
+    def watch_doors(self) -> None:
+        """Read every door back over the next few seconds (e.g. after a door event)."""
+        for record in self.records.values():
+            if record.record_type is RecordType.DOOR:
+                self._start_door_watch(record.index)
+
+    def _start_door_watch(self, index: int) -> None:
+        if self._stopping or not self._conn.connected:
+            return
+        task = self._door_watch.get(index)
+        if task is not None and not task.done():
+            return
+        task = asyncio.create_task(self._refresh_later((RecordType.DOOR, index), DOOR_WATCH_DELAYS))
+        self._door_watch[index] = task
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+
     def _watch_door(self, index: int, previous: Status | None, status: Status) -> None:
         """Catch lock changes the panel does not push.
 
@@ -414,16 +431,8 @@ class ProtegeClient:
             return
         moved = isinstance(previous, DoorStatus) and previous.door_state != status.door_state
         timed_unlock = status.lock_state in _TIMED_UNLOCKS
-        if not (moved or timed_unlock):
-            return
-        task = self._door_watch.get(index)
-        if task is not None and not task.done():
-            return
-        self._door_watch[index] = asyncio.create_task(
-            self._refresh_later((RecordType.DOOR, index), DOOR_WATCH_DELAYS)
-        )
-        self._background.add(self._door_watch[index])
-        self._door_watch[index].add_done_callback(self._background.discard)
+        if moved or timed_unlock:
+            self._start_door_watch(index)
 
     # ----- connection ----------------------------------------------------
 
