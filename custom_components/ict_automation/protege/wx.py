@@ -263,15 +263,27 @@ class WXClient:
             await self.logout()
 
 
-def apply_names(records: list[Record], lists: dict[RecordType, list[tuple[int, str]]]) -> int:
+def apply_names(
+    records: list[Record], lists: dict[RecordType, list[tuple[int, str]]], *, by_id: bool = False
+) -> int:
     """Name records from WX lists. Returns how many records were named.
 
-    WX record IDs are database IDs with gaps, not ACS indexes, but the lists come
-    back in the same order as the ACS records (checked on site: the counts match
-    and module references line up). So match by position, and only when the
-    counts agree, to avoid naming the wrong record.
+    With `by_id` the control service numbers records by record ID, so they match directly.
+    Otherwise (ACPUseDisplayOrder) WX record IDs are database IDs with gaps, but the lists
+    come back in the same order as the ACS records (checked on site: the counts match and
+    module references line up). So match by position, and only when the counts agree,
+    to avoid naming the wrong record.
     """
     named = 0
+    if by_id:
+        labels = {
+            (record_type, rec_id): label for record_type, items in lists.items() for rec_id, label in items
+        }
+        for record in records:
+            if label := labels.get(record.key):
+                record.name = label
+                named += 1
+        return named
     for record_type, items in lists.items():
         ours = sorted((r for r in records if r.record_type is record_type), key=lambda r: r.index)
         if not ours:
@@ -322,11 +334,19 @@ def input_type_ids(inputs: dict[int, dict[str, str]]) -> list[int]:
     )
 
 
-def apply_zone_settings(records: list[Record], site: WXSite) -> int:
+def apply_zone_settings(records: list[Record], site: WXSite, *, by_id: bool = False) -> int:
     """Give inputs their areas, and the areas where they may be open when arming.
 
-    WX ids map to ACS records by position, as for names. Returns how many inputs were set.
+    WX ids map to ACS records directly or by position, as for names. Returns how many inputs were set.
     """
+    if by_id:
+        area_ids = {r.index: r.index for r in records if r.record_type is RecordType.AREA}
+        updated = 0
+        for record in records:
+            if record.record_type is RecordType.INPUT and (fields := site.inputs.get(record.index)):
+                record.areas, record.arm_open = zone_settings(fields, site.input_types, area_ids)
+                updated += 1
+        return updated
     areas = sorted((r for r in records if r.record_type is RecordType.AREA), key=lambda r: r.index)
     inputs = sorted((r for r in records if r.record_type is RecordType.INPUT), key=lambda r: r.index)
     wx_areas = site.lists.get(RecordType.AREA, [])

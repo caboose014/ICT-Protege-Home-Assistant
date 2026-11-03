@@ -44,7 +44,8 @@ from .protege import (
     RecordType,
     StatusUpdate,
 )
-from .protege.wx import WXClient, WXError, apply_names, apply_zone_settings
+from .protege.client import NUMBERING_RECORD_ID
+from .protege.wx import NO_RECORD, WXClient, WXError, WXSite, apply_names, apply_zone_settings
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -94,22 +95,49 @@ def records_from_data(data: list[dict[str, Any]]) -> list[Record]:
     ]
 
 
-async def async_name_records(hass: HomeAssistant, entry: ConfigEntry, records: list[Record]) -> None:
-    """Give freshly discovered records their names.
+async def async_discover_records(
+    hass: HomeAssistant, entry: ConfigEntry, client: ProtegeClient
+) -> list[Record]:
+    """Discover records over the control service, named and with zone settings.
 
-    Names saved from the last successful read are applied first, then refreshed from
-    the WX web interface when an operator login is configured.
+    When an operator login is configured, the web interface is read first (one login):
+    its record IDs tell discovery which records to read, and give names and zone settings.
+    Names saved from the last successful read are used when it can't be reached.
     """
+    site = await _async_read_site(hass, entry)
     saved = {r.key: r for r in records_from_data(entry.data.get(CONF_RECORDS, []))}
+    listed: dict[RecordType, list[int]] = {}
+    if site is not None:
+        for record_type, items in site.lists.items():
+            listed[record_type] = [rec_id for rec_id, _ in items if rec_id not in NO_RECORD]
+    else:
+        # Without the web interface, the records found last time still tell how the panel numbers them.
+        for record_type, index in saved:
+            listed.setdefault(record_type, []).append(index)
+    records = await client.discover(listed=listed or None)
     for record in records:
         if (old := saved.get(record.key)) is not None:
             record.name = record.name or old.name
             record.areas = old.areas if record.areas is None else record.areas
             record.arm_open = old.arm_open if record.arm_open is None else record.arm_open
+    if site is not None:
+        by_id = client.numbering == NUMBERING_RECORD_ID
+        named = apply_names(records, site.lists, by_id=by_id)
+        zoned = apply_zone_settings(records, site, by_id=by_id)
+        _LOGGER.debug(
+            "Panel numbers records by %s; named %d records and read zone settings for %d inputs",
+            client.numbering,
+            named,
+            zoned,
+        )
+    return records
+
+
+async def _async_read_site(hass: HomeAssistant, entry: ConfigEntry) -> WXSite | None:
     username = entry.options.get(CONF_WX_USERNAME)
     password = entry.options.get(CONF_WX_PASSWORD)
     if not username or not password:
-        return
+        return None
     client = WXClient(
         async_get_clientsession(hass, verify_ssl=False),
         entry.data[CONF_HOST],
@@ -118,15 +146,10 @@ async def async_name_records(hass: HomeAssistant, entry: ConfigEntry, records: l
         int(entry.options.get(CONF_WX_PORT, DEFAULT_WX_PORT)),
     )
     try:
-        site = await client.fetch_site()
+        return await client.fetch_site()
     except WXError as err:
         _LOGGER.warning("Could not read names from the WX web interface: %s", err)
-        return
-    named = apply_names(records, site.lists)
-    zoned = apply_zone_settings(records, site)
-    _LOGGER.debug(
-        "Named %d records and read zone settings for %d inputs from the WX web interface", named, zoned
-    )
+        return None
 
 
 class ProtegeHub:

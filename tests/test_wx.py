@@ -189,3 +189,30 @@ def test_which_input_types_may_be_open_when_arming(fields, allowed):
     from custom_components.ict_automation.protege.wx import allowed_open_when_arming
 
     assert allowed_open_when_arming(fields) is allowed
+
+
+def test_names_and_zones_by_record_id():
+    """Without ACPUseDisplayOrder the control service uses the web interface's record IDs."""
+    from custom_components.ict_automation.protege.wx import WXSite, apply_zone_settings
+
+    records = [
+        Record(RecordType.AREA, 0),
+        Record(RecordType.AREA, 16),
+        Record(RecordType.INPUT, 14),
+        Record(RecordType.OUTPUT, 112),
+    ]
+    lists = {
+        RecordType.AREA: [(0, "System Area"), (16, "Soundline")],
+        RecordType.INPUT: [(14, "Gallery PIR")],
+        RecordType.OUTPUT: [(112, "Bell")],
+    }
+    assert apply_names(records, lists, by_id=True) == 4
+    assert [r.name for r in records] == ["System Area", "Soundline", "Gallery PIR", "Bell"]
+    site = WXSite(
+        lists,
+        {14: {"Area1": "16", "ZoneType1": "50", "Area2": "2147483647"}},
+        {50: {"GenerateAlarms": "true", "ExitAlleyZoneDoNotTestIt": "true"}},
+    )
+    assert apply_zone_settings(records, site, by_id=True) == 1
+    assert records[2].areas == [16]
+    assert records[2].arm_open == [16]

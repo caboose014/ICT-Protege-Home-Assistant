@@ -12,6 +12,9 @@ There are two ways to connect:
 * **Web interface only**: for panels without that licence. It logs in to the WX web interface as a limited operator
   and watches the panel's event log, so it needs no licence. See [Web-only mode](#web-only-mode).
 
+Setup always asks for a web interface operator, then looks for the control service and uses it if it answers.
+If it doesn't, the integration runs on the web interface and offers to switch over when the control service turns up later.
+
 > [!NOTE]
 > [ha-protege-wx](https://github.com/olliemaller/ha-protege-wx) is another integration that works through the WX web interface.
 
@@ -54,9 +57,13 @@ When the panel refuses a command (wrong code, no rights, door in lockdown, input
 
 ## Setup on the ICT side
 
-All of this is done in the Protege WX web interface.
+All of this is done in the Protege WX web interface. Without the Automation licence, only the operator (step 4) is needed;
+see [Web-only mode](#web-only-mode) for the rights to give it.
 
-### 1. Control service (required)
+You don't need the `ACPUseDisplayOrder` command. Without it the control service uses the same record IDs as the web interface,
+which the integration reads directly. Panels that already have it set work too: records are then matched by display order.
+
+### 1. Control service (needs the Automation licence)
 
 Go to **Automation > Services**, add a service, and set:
 
@@ -82,7 +89,7 @@ Go to **Automation > Services**, add a service, and set:
 The panel allows one connection per service, so give Home Assistant its own service rather than sharing one
 used by another system (Savant, Control4 and so on).
 
-### 2. Integration user (required)
+### 2. Integration user (with the control service)
 
 Under **Users**, create a user for Home Assistant with a PIN and rights to the doors, outputs and inputs (for bypass)
 you want to control. Leave out arm and disarm rights: arming always uses the person's own code.
@@ -101,10 +108,10 @@ For panel events (who badged, what was unlocked, inputs, alarms) in Home Assista
   <img src="docs/images/ict-events-service-options.png" width="460" alt="Events service: port and options">
 </p>
 
-### 4. WX operator for names and zone settings (optional)
+### 4. WX operator (required)
 
 The control service carries no names or zone settings, so the integration reads them from the web interface.
-Enable HTTPS on the controller and create an operator whose role can only **view** programming.
+Enable HTTPS on the controller and create an operator for Home Assistant. With the control service, its role only needs to **view** programming.
 It logs in once at start-up (and on Rescan), reads names, which areas each input is in and their input types, then logs out.
 No session is kept open, and only read requests are sent, so this operator never changes anything.
 Requires firmware 4.00.1676 or later.
@@ -112,7 +119,7 @@ Requires firmware 4.00.1676 or later.
 ## Web-only mode
 
 If your WX has the Automation and Control licence, use the control service instead: it is faster, and the panel itself checks arm codes.
-Without the licence, choose **Web interface only** when adding the integration.
+Without the licence, setup finds no control service and carries on through the web interface.
 
 **On the ICT side**, enable HTTPS on the controller (firmware 4.00.1676 or later) and create an operator just for Home Assistant.
 Give its role only what you want Home Assistant to do: view status and events, plus control of the doors, areas, outputs and
@@ -133,6 +140,12 @@ and asks you to re-enter it from **Settings > Devices & services**, so it can't 
 Everything else in [What you get](#what-you-get) works the same, including open zones, ready to arm, alarm cause and emergency alerts.
 Events show up in the **Panel event** entity and logbook a second or two after they happen.
 
+**Switching to the control service later**: every 6 hours, and when you press **Rescan panel**, the integration checks whether the
+control service answers on the port given at setup (usually `21000`). When it does, **Settings > Repairs** offers to switch over;
+you can also do it any time from **Configure > Switch to the Automation and Control service**. Enter the integration PIN and the
+same devices and entities carry on, with their history, on the control service. From then on it stays on the control service and
+never falls back to the web interface; if the service stops answering, the entities show as unavailable until it's back.
+
 ## Install
 
 ### HACS
@@ -148,14 +161,15 @@ Add this repository as a custom repository (category *Integration*), download **
 ## Setup on the Home Assistant side
 
 1. **Settings > Devices & services > Add integration > ICT Protege**.
-2. Choose **Automation and Control service**, then enter the controller's IP address, the control service port (`21000`) and the integration PIN.
-   (For **Web interface only**, enter the address, HTTPS port, operator login and code option; see [Web-only mode](#web-only-mode).)
-   Every door, area, input, output and trouble input is found and added.
-3. Open the integration's **Configure** (the cog on the hub) for the optional extras:
-   * **Names from the WX web interface**: the WX operator name, password and HTTPS port (usually `443`).
-     Names are read straight away, on every start, and when you press **Rescan panel**.
+2. Enter the controller's IP address, the operator name and password, the HTTPS port (usually `443`) and the
+   control service port (usually `21000`).
+3. If the control service answers, enter the integration PIN (or tick *Use the web interface only instead*).
+   If it doesn't, choose how arming codes work (see [Web-only mode](#web-only-mode)).
+   Every door, area, input, output and trouble input is found, named and added.
+4. With the control service, open the integration's **Configure** (the cog on the hub) for the optional extras:
+   * **Names and zone settings**: change or remove the WX operator. Names are read on every start and when you press **Rescan panel**.
    * **Event logging**: the events service port (`21001`) and the events user's PIN.
-4. Tidy up the devices:
+5. Tidy up the devices:
    * Put each door, input and output device in its Home Assistant area.
    * **Disable** any area you don't use, for example a system area that only exists for monitoring.
    * On each area's device, turn off the **Allow arm …** switches for modes that area doesn't use; they disappear from its alarm panel.
