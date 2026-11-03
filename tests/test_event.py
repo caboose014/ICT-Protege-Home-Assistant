@@ -52,3 +52,10 @@ def test_category_and_description_are_split():
 )
 def test_user_is_extracted(raw, user):
     assert _event(raw).user == user
+
+
+def test_card_number_is_left_out():
+    event = _event(b"User\x00Mikey Entry Granted Front Door Using User By Card [Card 321:5]\x00")
+    assert event.user == "Mikey"
+    assert "321" not in event.text
+    assert event.text == "User Mikey Entry Granted Front Door Using User By Card"
