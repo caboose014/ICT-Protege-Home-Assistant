@@ -45,6 +45,8 @@ def test_category_and_description_are_split():
         (b"User\x00Savant Unlocked Door Jail Gate At Savant\x00", "Savant"),
         (b"User\x00Test User Logged Out At\x00", "Test User"),
         (b"User\x00Savant Remote Login Savant\x00", "Savant"),
+        (b"\x00Jordan McDonald Unlocked Door Jail Gate \x00", "Jordan McDonald"),
+        (b"Thu 10:48:54 User Warren Entry Granted D2\x00", None),
         (b"Door\x00Front Door Unlocked By REX\x00", None),
     ],
 )

@@ -341,14 +341,19 @@ def decode_event(block: p.ICTDataBlock) -> PanelEvent | None:
     if block.data_type in (p.DATA_EVENT_TEXT, p.DATA_EVENT_TEXT[::-1]):
         # Some panels separate the fields with NULs; join them rather than keep only the first.
         # On site: b"Door\x00Front Door Unlocked By REX\x00".
-        parts = [part.strip() for part in block.body.decode("ascii", errors="replace").split("\x00")]
-        parts = [part for part in parts if part]
+        raw = [part.strip() for part in block.body.decode("ascii", errors="replace").split("\x00")]
+        parts = [part for part in raw if part]
         if not parts:
             return None
-        category = parts[0] if len(parts) > 1 else None
-        description = " ".join(parts[1:]) if len(parts) > 1 else parts[0]
+        # A leading empty field means the event has no category.
+        category = parts[0] if len(parts) > 1 and raw[0] else None
+        description = " ".join(parts[1:]) if category else " ".join(parts)
         event = PanelEvent(text=" ".join(parts), category=category, description=description)
         event.user = event_user(event)
+        if not raw[0] and event.user is None:
+            # Events with an empty category also name a user, e.g. on site:
+            # b"\x00Jordan McDonald Unlocked Door Jail Gate \x00".
+            event.user = event_user(PanelEvent(category="user", description=event.description))
         return event
     if block.data_type in (p.DATA_EVENT_NUMERIC, p.DATA_EVENT_NUMERIC[::-1]) and len(block.body) >= 2:
         return PanelEvent(code=struct.unpack("<H", block.body[:2])[0], data=bytes(block.body[2:8]))
