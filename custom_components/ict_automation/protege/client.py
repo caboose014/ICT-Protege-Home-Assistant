@@ -31,6 +31,15 @@ _LOGGER = logging.getLogger(__name__)
 
 MAX_MONITORED = 250
 MONITOR_BATCH = 10
+# Read a door back this long after it moves or is seen on a timed unlock.
+DOOR_WATCH_DELAYS = (0.3, 1.5, 4.0, 8.0, 15.0)
+_TIMED_UNLOCKS = {
+    DoorLockState.UNLOCKED_USER,
+    DoorLockState.UNLOCKED_USER_TIMED,
+    DoorLockState.UNLOCKED_REX,
+    DoorLockState.UNLOCKED_REN,
+    DoorLockState.UNLOCKED_KEYPAD,
+}
 MONITOR_PRIORITY = (
     RecordType.AREA,
     RecordType.DOOR,
@@ -331,6 +340,7 @@ class ProtegeClient:
         self._tasks: list[asyncio.Task] = []
         self._background: set[asyncio.Task] = set()
         self._command_generation = 0
+        self._door_watch: dict[int, asyncio.Task] = {}
         self._stopping = False
         self._available = False
 
@@ -360,12 +370,37 @@ class ProtegeClient:
             update = decode_status(block)
             if update is None:
                 continue
+            previous = self.status.get((update.record_type, update.index))
             self.status[(update.record_type, update.index)] = update.status
+            if update.record_type is RecordType.DOOR:
+                self._watch_door(update.index, previous, update.status)
             record = self.records.get((update.record_type, update.index))
             if record is not None and record.reference is None:
                 record.reference = getattr(update.status, "reference", None) or None
             for listener in list(self._status_listeners):
                 listener(update)
+
+    def _watch_door(self, index: int, previous: Status | None, status: Status) -> None:
+        """Catch lock changes the panel does not push.
+
+        On some panels a card or REX unlock pushes the door opening but not the unlock.
+        When a door opens or closes, or is seen unlocked by a timer, read it back a few
+        times so HA shows the unlock and the relock.
+        """
+        if self._stopping or not isinstance(status, DoorStatus):
+            return
+        moved = isinstance(previous, DoorStatus) and previous.door_state != status.door_state
+        timed_unlock = status.lock_state in _TIMED_UNLOCKS
+        if not (moved or timed_unlock):
+            return
+        task = self._door_watch.get(index)
+        if task is not None and not task.done():
+            return
+        self._door_watch[index] = asyncio.create_task(
+            self._refresh_later((RecordType.DOOR, index), DOOR_WATCH_DELAYS)
+        )
+        self._background.add(self._door_watch[index])
+        self._door_watch[index].add_done_callback(self._background.discard)
 
     # ----- connection ----------------------------------------------------
 

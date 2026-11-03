@@ -198,3 +198,23 @@ async def test_commands_are_not_stuck_behind_monitoring_restore(panel, monkeypat
     session = panel.sessions[0]
     await _wait_until(lambda: len(session.monitored) == len(records), timeout=3)
     await client.stop()
+
+
+async def test_badge_unlock_shows_even_when_panel_only_pushes_the_door_opening(panel, monkeypatch):
+    """Seen on site: a granted badge pushed the door opening with the lock byte still 'locked'."""
+    from custom_components.ict_automation.protege import client as client_mod
+
+    monkeypatch.setattr(client_mod, "DOOR_WATCH_DELAYS", (0.05, 0.2, 0.4))
+    client = ProtegeClient("127.0.0.1", panel.port, "1234")
+    await client.connect()
+    records = await client.discover()
+    await client.start(records)
+
+    panel.doors[1] = [0x01, 0x01]  # the panel's real state: unlocked by user, door open
+    stale = p.build_data_packet([((0x00, p.GROUP_DOOR), bytes((1, 0, 0, 0, 0x00, 0x01, 0, 0)))])
+    panel.sessions[0].writer.write(stale)  # the push only reports the door opening
+    await _wait_until(lambda: client.status[(RecordType.DOOR, 1)].lock_state == DoorLockState.UNLOCKED_USER)
+
+    panel.doors[1] = [0x00, 0x00]  # relocks on its timer without a push
+    await _wait_until(lambda: client.status[(RecordType.DOOR, 1)].locked)
+    await client.stop()
