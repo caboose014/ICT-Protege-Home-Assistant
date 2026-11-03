@@ -45,6 +45,9 @@ Everything here is done in the Protege WX web interface.
 
 1. Make sure HTTPS is enabled on the controller (firmware 4.00.1676 or later).
 2. Create a role for Home Assistant, then an operator with that role. Use it only for Home Assistant, not for people.
+   Leaving *Operator Timeout* on is fine: if the panel ends the session, the integration logs in again on its own.
+
+   <img src="docs/images/ict-operator.png" width="700" alt="Operator: name, username, password, role and operator timeout">
 3. Give the role only what Home Assistant needs:
 
 | Your panel | Rights the role needs |
