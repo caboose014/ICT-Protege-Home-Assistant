@@ -1,0 +1,33 @@
+force_arm:
+  target:
+    entity:
+      integration: ict_automation
+      domain: alarm_control_panel
+  fields:
+    code:
+      required: true
+      selector:
+        text:
+          type: password
+
+turn_on_for:
+  target:
+    entity:
+      integration: ict_automation
+      domain: switch
+  fields:
+    duration:
+      required: true
+      selector:
+        duration:
+
+bypass:
+  target:
+    entity:
+      integration: ict_automation
+      domain: switch
+  fields:
+    permanent:
+      default: false
+      selector:
+        boolean:
