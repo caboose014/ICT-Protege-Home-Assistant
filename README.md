@@ -205,6 +205,8 @@ Card numbers are removed from event text so they don't end up in Home Assistant'
 **Web interface only**
 
 * **A command is refused**: the operator's role doesn't have control rights for that door, area or output.
+* **"Web operator can't read everything" under Repairs**: the operator's role is missing the Monitoring boxes it names.
+  Tick them on the role, or disable those entities if you don't need them.
 * **Asked to re-enter the operator password**: the panel rejected the saved password (for example after it was changed).
   The integration stops logging in so the operator doesn't get locked out; enter it again from **Settings > Devices & services**.
 * **Entities unavailable**: the web interface can't be reached. The integration retries on its own.

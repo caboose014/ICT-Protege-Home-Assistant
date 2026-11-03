@@ -267,6 +267,9 @@ class ProtegeWebClient:
         self._connection_listeners: list[ConnectionListener] = []
         self._event_listeners: list[EventListener] = []
         self._cookie_listeners: list[CookieListener] = []
+        # Status tables the operator's role isn't allowed to read.
+        self.denied: set[RecordType] = set()
+        self._denied_listeners: list[Callable[[set[RecordType]], None]] = []
         self._lock = asyncio.Lock()
         self._task: asyncio.Task | None = None
         self._background: set[asyncio.Task] = set()
@@ -302,6 +305,22 @@ class ProtegeWebClient:
         """Panel events, as the events client offers them."""
         self._event_listeners.append(listener)
         return lambda: self._event_listeners.remove(listener)
+
+    def add_denied_listener(self, listener: Callable[[set[RecordType]], None]) -> Callable[[], None]:
+        """Called with the tables the operator can't read whenever that set changes."""
+        self._denied_listeners.append(listener)
+        return lambda: self._denied_listeners.remove(listener)
+
+    def _set_denied(self, record_type: RecordType, denied: bool) -> None:
+        if (record_type in self.denied) == denied:
+            return
+        if denied:
+            _LOGGER.warning("The web operator's role can't read %s status", record_type.value)
+            self.denied.add(record_type)
+        else:
+            self.denied.discard(record_type)
+        for listener in list(self._denied_listeners):
+            listener(set(self.denied))
 
     def add_cookie_listener(self, listener: CookieListener) -> Callable[[], None]:
         """Called with the session cookie after each login (None after logout), to save it."""
@@ -523,7 +542,10 @@ class ProtegeWebClient:
             return
         async with self._lock:
             reply = await self._request(f"Request&Type=Status&SubType={TABLES[record_type]}")
-        if _is_fail(reply) or reply.strip().upper() in _NOTHING:
+        if reply.strip().upper() in _NOTHING:
+            return
+        self._set_denied(record_type, _is_fail(reply))
+        if _is_fail(reply):
             return
         references = {index: r.reference for (rt, index), r in self.records.items() if rt is record_type}
         timed_door = False

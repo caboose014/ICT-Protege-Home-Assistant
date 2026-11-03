@@ -476,3 +476,23 @@ async def test_removing_the_entry_deletes_its_session(hass: HomeAssistant, contr
     await hass.config_entries.async_remove(entry.entry_id)
     await hass.async_block_till_done()
     assert key not in hass_storage
+
+
+async def test_missing_role_rights_raise_a_repair(hass: HomeAssistant, controller) -> None:
+    from homeassistant.helpers import issue_registry as ir
+
+    controller.denied_tables = {"GXT_PGMS_TBL", "GXT_TROUBLEINPUTS_TBL"}
+    entry = _entry(controller, {CONF_CODE_MODE: CODE_MODE_NONE})
+    await _setup(hass, entry)
+    issues = ir.async_get(hass)
+    issue = issues.async_get_issue(DOMAIN, f"web_rights_{entry.entry_id}")
+    assert issue is not None
+    assert issue.translation_placeholders["boxes"] == "Outputs, Trouble Inputs"
+
+    # Ticking the boxes clears it on the next full read.
+    controller.denied_tables = set()
+    await entry.runtime_data.client.refresh_all()
+    await hass.async_block_till_done()
+    assert issues.async_get_issue(DOMAIN, f"web_rights_{entry.entry_id}") is None
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()

@@ -49,6 +49,7 @@ class FakeWebController:
         self.events: list[str] = []  # waiting for the next Update
         self.controls: list[tuple[str, int, int, int | None]] = []
         self.refuse_controls = False
+        self.denied_tables: set[str] = set()  # status tables the operator's role can't read
 
     # ----- helpers --------------------------------------------------------
 
@@ -98,6 +99,8 @@ class FakeWebController:
         if query.startswith("Request&Type=Detail&"):
             text = self.details.get((q["SubType"], int(q["RecId"])))
             return web.Response(text=text or "Request Failed")
+        if query.startswith("Request&Type=Status&") and q["SubType"] in self.denied_tables:
+            return web.Response(text="Request Failed")
         if query.startswith("Request&Type=Status&"):
             prefix, table = {
                 "GXT_AREAS_TBL": ("Area", self.areas),
