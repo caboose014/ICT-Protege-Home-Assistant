@@ -9,6 +9,9 @@ CONF_PIN = "pin"
 CONF_RECORDS = "records"
 CONF_EVENTS_PORT = "events_port"
 CONF_EVENTS_PIN = "events_pin"
+CONF_ARM_MODES = "arm_modes"
+
+ARM_MODES = ["away", "home", "night"]
 
 DEFAULT_PORT = 21000
 

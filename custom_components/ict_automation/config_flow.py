@@ -11,13 +11,30 @@ from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 
-from .const import CONF_EVENTS_PIN, CONF_EVENTS_PORT, CONF_PIN, CONF_RECORDS, DEFAULT_PORT, DOMAIN
+from .const import (
+    ARM_MODES,
+    CONF_ARM_MODES,
+    CONF_EVENTS_PIN,
+    CONF_EVENTS_PORT,
+    CONF_PIN,
+    CONF_RECORDS,
+    DEFAULT_PORT,
+    DOMAIN,
+)
 from .hub import records_to_data
 from .protege import CannotConnect, InvalidPin, ProtegeClient, ProtegeError, ProtegeEventClient
 
 _LOGGER = logging.getLogger(__name__)
 
 PIN_SELECTOR = selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD))
+ARM_MODES_SELECTOR = selector.SelectSelector(
+    selector.SelectSelectorConfig(
+        options=ARM_MODES,
+        multiple=True,
+        mode=selector.SelectSelectorMode.LIST,
+        translation_key=CONF_ARM_MODES,
+    )
+)
 PORT_SELECTOR = selector.NumberSelector(
     selector.NumberSelectorConfig(min=1, max=65535, mode=selector.NumberSelectorMode.BOX)
 )
@@ -106,15 +123,16 @@ class ProtegeConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class ProtegeOptionsFlow(OptionsFlow):
-    """Optional event logging through a second, view-only ACS service."""
+    """Which arm modes to offer, and optional event logging through a second, view-only service."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
             port = user_input.get(CONF_EVENTS_PORT)
             pin = user_input.get(CONF_EVENTS_PIN)
+            arm_modes = [m for m in ARM_MODES if m in user_input.get(CONF_ARM_MODES, [])]
             if not port and not pin:
-                return self.async_create_entry(data={})
+                return self.async_create_entry(data={CONF_ARM_MODES: arm_modes})
             if not port or not pin:
                 errors["base"] = "events_incomplete"
             elif int(port) == self.config_entry.data[CONF_PORT]:
@@ -130,11 +148,18 @@ class ProtegeOptionsFlow(OptionsFlow):
                 else:
                     await client.stop()
                     return self.async_create_entry(
-                        data={CONF_EVENTS_PORT: int(port), CONF_EVENTS_PIN: str(pin)}
+                        data={
+                            CONF_ARM_MODES: arm_modes,
+                            CONF_EVENTS_PORT: int(port),
+                            CONF_EVENTS_PIN: str(pin),
+                        }
                     )
         current = user_input or self.config_entry.options
         schema = vol.Schema(
             {
+                vol.Optional(
+                    CONF_ARM_MODES, default=list(current.get(CONF_ARM_MODES, ARM_MODES))
+                ): ARM_MODES_SELECTOR,
                 vol.Optional(
                     CONF_EVENTS_PORT,
                     description={"suggested_value": current.get(CONF_EVENTS_PORT)},

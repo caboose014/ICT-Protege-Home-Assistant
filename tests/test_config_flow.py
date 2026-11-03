@@ -8,6 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
 from custom_components.ict_automation.const import (
+    CONF_ARM_MODES,
     CONF_EVENTS_PIN,
     CONF_EVENTS_PORT,
     CONF_PIN,
@@ -73,9 +74,33 @@ async def test_options_flow_events(hass: HomeAssistant, panel: FakePanel) -> Non
             result["flow_id"], {CONF_EVENTS_PORT: events_panel.port, CONF_EVENTS_PIN: "4321"}
         )
         assert result["type"] is FlowResultType.CREATE_ENTRY
-        assert entry.options == {CONF_EVENTS_PORT: events_panel.port, CONF_EVENTS_PIN: "4321"}
+        assert entry.options == {
+            CONF_ARM_MODES: ["away", "home", "night"],
+            CONF_EVENTS_PORT: events_panel.port,
+            CONF_EVENTS_PIN: "4321",
+        }
         await hass.async_block_till_done()
         assert hass.states.get("event.protege_wx_panel_event") is not None
         await hass.config_entries.async_unload(entry.entry_id)
     finally:
         await events_panel.stop()
+
+
+async def test_options_remove_arm_modes(hass: HomeAssistant, panel: FakePanel) -> None:
+    result = await _start_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_HOST: "127.0.0.1", CONF_PORT: panel.port, CONF_PIN: "1234"}
+    )
+    entry = result["result"]
+    await hass.async_block_till_done()
+    assert hass.states.get("alarm_control_panel.area_1").attributes["supported_features"] == 7
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_ARM_MODES: ["away", "home"]}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    # Away (1) and home (2) remain; night (4) is gone.
+    assert hass.states.get("alarm_control_panel.area_1").attributes["supported_features"] == 3
+    await hass.config_entries.async_unload(entry.entry_id)
