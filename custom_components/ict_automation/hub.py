@@ -204,7 +204,10 @@ class ProtegeHub:
 
     @property
     def controller_device(self) -> DeviceInfo:
-        fw_type = self.panel.firmware_type or "WX"
+        # The control service reports "GX" for its firmware family, even on WX controllers.
+        # Anything reached through the WX web interface is a WX.
+        has_web = self.web or bool(self.entry.options.get(CONF_WX_USERNAME))
+        fw_type = "WX" if has_web else (self.panel.firmware_type or "WX")
         return DeviceInfo(
             identifiers={(DOMAIN, self.serial)},
             name=f"Protege {fw_type}",
