@@ -41,13 +41,13 @@
       "init": {
         "title": "Options",
         "menu_options": {
-          "names": "Names from the WX web interface",
+          "names": "Names and zone settings (WX web interface)",
           "events": "Event logging"
         }
       },
       "names": {
-        "title": "Names from the WX web interface",
-        "description": "The control service has no names, so they are read from the controller's web interface. Create a WX operator that can only view programming, and enter it here. Names are read on every start and when you press Rescan; names you change in Home Assistant are kept. Leave both fields empty to stop reading names.",
+        "title": "Names and zone settings from the WX web interface",
+        "description": "The control service has no names or zone settings, so they are read from the controller's web interface. Create a WX operator that can only view programming, and enter it here. It logs in on every start and when you press Rescan, reads names, each input's areas and input types, then logs out. Names you change in Home Assistant are kept. Leave both fields empty to stop.",
         "data": {
           "wx_username": "Operator name",
           "wx_password": "Operator password",

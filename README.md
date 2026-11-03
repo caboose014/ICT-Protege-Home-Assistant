@@ -18,7 +18,7 @@ Enter the panel address and a PIN, and every door, area, input, output and troub
 | --- | --- |
 | Panel | A controller device with firmware and serial, a **Rescan panel** button, and (optional) a **Panel event** entity |
 | Door | A device with a **lock** (lock, unlock latched, *open* = momentary unlock), a **contact** sensor and a **door state** sensor (closed, open, left open, forced open) |
-| Area | A device with an **alarm panel** (away = normal arm, home = stay, night = instant), **alarm** and **siren** sensors, and **Allow arm away / home / night** switches to hide arm modes that area doesn't use |
+| Area | A device with an **alarm panel** (away = normal arm, home = stay, night = instant), **alarm** and **siren** sensors, **Allow arm away / home / night** switches to hide arm modes that area doesn't use, and an **Alarm cause** sensor (the zone that set the alarm off, kept until disarm). With a WX operator set, also **Open zones** and **Ready to arm** |
 | Input | A device with a state sensor and a **Bypass** switch. Use *Show as* in the entity settings to make it a door, window, motion or smoke sensor |
 | Output | A device with a switch |
 | Trouble input | A diagnostic problem sensor on the controller, disabled by default |
@@ -28,6 +28,13 @@ Every door, area, input and output is its own device, so each one can go in its 
 
 Names come from the panel's WX web interface when an operator login is set (see below), otherwise from the module
 reference, for example `Input ZX001:03`. Anything you rename in Home Assistant keeps your name.
+
+**Open zones** and **Ready to arm** only count zones that must be closed for the area to arm. Zones whose input type
+isn't tested at arming (for example *Delay No Test*), 24 hour zones and trouble zones are left out. When an arm is refused,
+the error names the open zones.
+
+With the events service set up, a **duress, panic or medical** alarm raises a critical alert under
+**Settings > Repairs** that stays until you mark it handled, and fires an `ict_automation_emergency` event for automations.
 
 Actions: `ict_automation.force_arm` (alarm panel), `ict_automation.turn_on_for` (output, with a duration) and
 `ict_automation.bypass` (bypass switch, optionally permanent).
@@ -91,11 +98,12 @@ For panel events (who badged, what was unlocked, inputs, alarms) in Home Assista
   <img src="docs/images/ict-events-service-options.png" width="460" alt="Events service: port and options">
 </p>
 
-### 4. WX operator for names (optional)
+### 4. WX operator for names and zone settings (optional)
 
-The control service carries no names, so the integration reads them from the web interface.
+The control service carries no names or zone settings, so the integration reads them from the web interface.
 Enable HTTPS on the controller and create an operator whose role can only **view** programming.
-Only the session login and List requests are sent, so this operator never changes anything.
+It logs in once at start-up (and on Rescan), reads names, which areas each input is in and their input types, then logs out.
+No session is kept open, and only read requests are sent, so this operator never changes anything.
 Requires firmware 4.00.1676 or later.
 
 ## Install
