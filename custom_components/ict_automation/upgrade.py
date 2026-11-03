@@ -43,6 +43,11 @@ _LOGGER = logging.getLogger(__name__)
 CHECK_INTERVAL = 6 * 3600  # seconds between checks for the control service in web-only mode
 
 
+def session_store(hass: HomeAssistant, entry: ConfigEntry) -> Store[dict[str, str]]:
+    """Web-only mode's saved session cookie (only readable by the user Home Assistant runs as)."""
+    return Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.session", private=True)
+
+
 def issue_id(entry: ConfigEntry) -> str:
     return f"acs_available_{entry.entry_id}"
 
@@ -188,7 +193,7 @@ async def async_upgrade(hass: HomeAssistant, entry: ConfigEntry, port: int, pin:
     await hass.config_entries.async_unload(entry.entry_id)
     by_record_id = client.numbering == NUMBERING_RECORD_ID
     _migrate_registries(hass, entry, _renumber(serial, mapping, by_record_id))
-    await Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.session").async_remove()
+    await session_store(hass, entry).async_remove()
     ir.async_delete_issue(hass, DOMAIN, issue_id(entry))
 
     options: dict[str, Any] = {
