@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from typing import Any
 
 import voluptuous as vol
@@ -13,7 +15,7 @@ from homeassistant.components.alarm_control_panel import (
 )
 from homeassistant.const import ATTR_CODE
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -21,10 +23,11 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from . import ProtegeConfigEntry
 from .const import ARM_MODES, DOMAIN
 from .entity import ProtegeEntity
-from .protege import AreaState, AreaStatus, RecordType
+from .protege import AreaState, AreaStatus, ProtegeError, RecordType
 from .protege import protocol as p
 
 SERVICE_FORCE_ARM = "force_arm"
+ARM_CHECK_DELAY = 1.0
 
 _FEATURES = {
     "away": AlarmControlPanelEntityFeature.ARM_AWAY,
@@ -106,6 +109,27 @@ class ProtegeArea(ProtegeEntity, AlarmControlPanelEntity):
         if not code:
             raise ServiceValidationError(translation_domain=DOMAIN, translation_key="code_required")
         await self._run(self.hub.client.area_command(self.record.index, sub_command, code))
+        if mode is not None or sub_command == p.AREA_ARM_FORCE:
+            await self._check_armed()
+
+    async def _check_armed(self) -> None:
+        """The panel accepts an arm request even when open zones stop it arming; say which."""
+        status: AreaStatus | None = self.status
+        if status is not None and not status.armed:
+            # Give the panel a moment to start its exit delay before calling it a failure.
+            await asyncio.sleep(ARM_CHECK_DELAY)
+            with contextlib.suppress(ProtegeError):
+                await self.hub.client.request_status(RecordType.AREA, self.record.index)
+            status = self.status
+        if status is None or status.armed:
+            return
+        zones = self.hub.open_zones(self.record.index)
+        if status.state == AreaState.INPUTS_OPEN or zones:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="arm_failed_open_zones" if zones else "arm_failed",
+                translation_placeholders={"zones": ", ".join(zones or [])},
+            )
 
     async def async_alarm_disarm(self, code: str | None = None) -> None:
         await self._area(p.AREA_DISARM_ALL, code)

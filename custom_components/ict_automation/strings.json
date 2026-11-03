@@ -88,6 +88,9 @@
       },
       "siren": {
         "name": "Siren"
+      },
+      "ready_to_arm": {
+        "name": "Ready to arm"
       }
     },
     "button": {
@@ -139,6 +142,12 @@
           "short": "Short circuit",
           "tamper": "Tamper"
         }
+      },
+      "open_zones": {
+        "name": "Open zones"
+      },
+      "alarm_cause": {
+        "name": "Alarm cause"
       }
     },
     "switch": {
@@ -171,6 +180,12 @@
     },
     "arm_mode_disabled": {
       "message": "This arm mode is turned off for this area. Turn it back on with the area's Allow arm switch."
+    },
+    "arm_failed_open_zones": {
+      "message": "The area didn't arm because these zones are open: {zones}. Close them, bypass them, or force arm."
+    },
+    "arm_failed": {
+      "message": "The area didn't arm. The panel reports open zones."
     }
   },
   "services": {
@@ -201,6 +216,19 @@
         "permanent": {
           "name": "Permanent",
           "description": "Keep the bypass until it is removed."
+        }
+      }
+    }
+  },
+  "issues": {
+    "emergency": {
+      "title": "Emergency: {kind} alarm",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "{kind} alarm",
+            "description": "The panel reported: {text}\n\nSubmit to mark it handled."
+          }
         }
       }
     }

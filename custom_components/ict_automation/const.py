@@ -20,6 +20,7 @@ ARM_MODES = ["away", "home", "night"]
 DEFAULT_PORT = 21000
 
 EVENT_PANEL = f"{DOMAIN}_event"
+EVENT_EMERGENCY = f"{DOMAIN}_emergency"
 
 EVENT_TYPES = [
     "access_granted",

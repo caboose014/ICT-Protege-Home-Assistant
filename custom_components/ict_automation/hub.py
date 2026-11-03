@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import re
+import time
 from collections import defaultdict
 from collections.abc import Callable
 from typing import Any
@@ -11,6 +13,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
 
@@ -24,10 +27,13 @@ from .const import (
     CONF_WX_USERNAME,
     DEFAULT_WX_PORT,
     DOMAIN,
+    EVENT_EMERGENCY,
     EVENT_PANEL,
     MANUFACTURER,
 )
 from .protege import (
+    AreaStatus,
+    InputStatus,
     PanelEvent,
     PanelInfo,
     ProtegeClient,
@@ -36,11 +42,26 @@ from .protege import (
     RecordType,
     StatusUpdate,
 )
-from .protege.wx import WXClient, WXError, apply_names
+from .protege.wx import WXClient, WXError, apply_names, apply_zone_settings
 
 _LOGGER = logging.getLogger(__name__)
 
 CONTROLLER_MODULE = "CP001"
+
+# An input that opened this long before an alarm is taken as its cause.
+ALARM_CAUSE_WINDOW = 90.0
+
+# Whole words, so a name like "Panic Room" only trips it as part of a real alarm line.
+_EMERGENCY = re.compile(r"\b(duress|panic|medical|hold[ -]?up)\b", re.IGNORECASE)
+
+
+def emergency_kind(text: str | None) -> str | None:
+    """ "duress", "medical" or "panic" when an event reports one of those alarms."""
+    match = _EMERGENCY.search(text or "")
+    if match is None:
+        return None
+    word = match.group(1).lower()
+    return word if word in ("duress", "medical") else "panic"
 
 
 def records_to_data(records: list[Record]) -> list[dict[str, Any]]:
@@ -49,12 +70,26 @@ def records_to_data(records: list[Record]) -> list[dict[str, Any]]:
         item: dict[str, Any] = {"type": r.record_type.value, "index": r.index, "reference": r.reference}
         if r.name:
             item["name"] = r.name
+        if r.areas is not None:
+            item["areas"] = list(r.areas)
+        if r.arm_open is not None:
+            item["arm_open"] = list(r.arm_open)
         out.append(item)
     return out
 
 
 def records_from_data(data: list[dict[str, Any]]) -> list[Record]:
-    return [Record(RecordType(d["type"]), int(d["index"]), d.get("reference"), d.get("name")) for d in data]
+    return [
+        Record(
+            RecordType(d["type"]),
+            int(d["index"]),
+            d.get("reference"),
+            d.get("name"),
+            d.get("areas"),
+            d.get("arm_open"),
+        )
+        for d in data
+    ]
 
 
 async def async_name_records(hass: HomeAssistant, entry: ConfigEntry, records: list[Record]) -> None:
@@ -63,9 +98,12 @@ async def async_name_records(hass: HomeAssistant, entry: ConfigEntry, records: l
     Names saved from the last successful read are applied first, then refreshed from
     the WX web interface when an operator login is configured.
     """
-    saved = {r.key: r.name for r in records_from_data(entry.data.get(CONF_RECORDS, [])) if r.name}
+    saved = {r.key: r for r in records_from_data(entry.data.get(CONF_RECORDS, []))}
     for record in records:
-        record.name = record.name or saved.get(record.key)
+        if (old := saved.get(record.key)) is not None:
+            record.name = record.name or old.name
+            record.areas = old.areas if record.areas is None else record.areas
+            record.arm_open = old.arm_open if record.arm_open is None else record.arm_open
     username = entry.options.get(CONF_WX_USERNAME)
     password = entry.options.get(CONF_WX_PASSWORD)
     if not username or not password:
@@ -78,12 +116,15 @@ async def async_name_records(hass: HomeAssistant, entry: ConfigEntry, records: l
         int(entry.options.get(CONF_WX_PORT, DEFAULT_WX_PORT)),
     )
     try:
-        lists = await client.fetch_all()
+        site = await client.fetch_site()
     except WXError as err:
         _LOGGER.warning("Could not read names from the WX web interface: %s", err)
         return
-    named = apply_names(records, lists)
-    _LOGGER.debug("Named %d records from the WX web interface", named)
+    named = apply_names(records, site.lists)
+    zoned = apply_zone_settings(records, site)
+    _LOGGER.debug(
+        "Named %d records and read zone settings for %d inputs from the WX web interface", named, zoned
+    )
 
 
 class ProtegeHub:
@@ -101,6 +142,12 @@ class ProtegeHub:
         self._unsubs: list[CALLBACK_TYPE] = []
         # Arm modes turned off per area index, set by each area's arm mode switches.
         self.disabled_arm_modes: dict[int, set[str]] = defaultdict(set)
+        # When each input last went from closed to active (monotonic seconds).
+        self.last_active: dict[int, float] = {}
+        self._input_active: dict[int, bool] = {}
+        self._area_alarm: dict[int, bool] = {}
+        # The input that set each area's alarm off, kept until the area is disarmed.
+        self.alarm_cause: dict[int, str | None] = {}
 
     # ----- identity -------------------------------------------------------
 
@@ -166,6 +213,68 @@ class ProtegeHub:
     def records_of(self, record_type: RecordType) -> list[Record]:
         return [r for r in self.records if r.record_type is record_type]
 
+    # ----- zones ----------------------------------------------------------
+
+    @property
+    def zones_known(self) -> bool:
+        """True once the inputs' areas have been read from the web interface."""
+        return any(r.areas is not None for r in self.records_of(RecordType.INPUT))
+
+    def area_inputs(self, area_index: int) -> list[Record]:
+        return [r for r in self.records_of(RecordType.INPUT) if area_index in (r.areas or ())]
+
+    def open_zones(self, area_index: int) -> list[str] | None:
+        """Names of the open, unbypassed inputs that stop this area arming (None if unknown).
+
+        Inputs whose type lets them stay open when arming are left out.
+        """
+        names = []
+        for record in self.area_inputs(area_index):
+            if area_index in (record.arm_open or ()):
+                continue
+            status = self.client.status.get(record.key)
+            if not isinstance(status, InputStatus):
+                return None
+            if status.active and not status.bypassed:
+                names.append(record.default_name)
+        return names
+
+    def _find_alarm_cause(self, area_index: int) -> str | None:
+        """The input that most recently went active in the area, else one active now."""
+        inputs = self.area_inputs(area_index) if self.zones_known else self.records_of(RecordType.INPUT)
+        cutoff = time.monotonic() - ALARM_CAUSE_WINDOW
+        recent = [
+            (self.last_active[r.index], r.default_name)
+            for r in inputs
+            if self.last_active.get(r.index, 0.0) >= cutoff
+        ]
+        if recent:
+            return max(recent)[1]
+        for record in inputs:
+            status = self.client.status.get(record.key)
+            if isinstance(status, InputStatus) and status.active and not status.bypassed:
+                return record.default_name
+        return None
+
+    def _track(self, update: StatusUpdate) -> list[tuple[RecordType, int]]:
+        """Note input activity and alarms; return other records whose entities depend on this one."""
+        status = update.status
+        if isinstance(status, InputStatus):
+            was = self._input_active.get(update.index, False)
+            self._input_active[update.index] = status.active
+            if status.active and not was:
+                self.last_active[update.index] = time.monotonic()
+            record = next((r for r in self.records_of(RecordType.INPUT) if r.index == update.index), None)
+            return [(RecordType.AREA, area) for area in (record.areas or ())] if record else []
+        if isinstance(status, AreaStatus):
+            was = self._area_alarm.get(update.index, False)
+            self._area_alarm[update.index] = status.alarm
+            if status.alarm and not was and self.alarm_cause.get(update.index) is None:
+                self.alarm_cause[update.index] = self._find_alarm_cause(update.index)
+            elif not status.armed and not status.alarm:
+                self.alarm_cause[update.index] = None
+        return []
+
     # ----- lifecycle ------------------------------------------------------
 
     async def async_start(self) -> None:
@@ -224,8 +333,10 @@ class ProtegeHub:
 
     @callback
     def _on_status(self, update: StatusUpdate) -> None:
-        for listener in list(self._listeners.get((update.record_type, update.index), ())):
-            listener()
+        dependants = self._track(update)
+        for key in [(update.record_type, update.index), *dependants]:
+            for listener in list(self._listeners.get(key, ())):
+                listener()
 
     @callback
     def _on_connection(self, available: bool) -> None:
@@ -244,12 +355,32 @@ class ProtegeHub:
                 "code": event.code,
             },
         )
+        if (kind := emergency_kind(event.text)) is not None:
+            self._raise_emergency(kind, event)
         if "door" in (event.text or "").lower():
             # Changes made by other systems (keypads, Savant, cards) are not always pushed on
             # the control connection; the event is a cue to read the doors back.
             self.client.watch_doors()
         for listener in list(self._event_listeners):
             listener(event)
+
+    @callback
+    def _raise_emergency(self, kind: str, event: PanelEvent) -> None:
+        """A duress, panic or medical alarm: an event, and a Repairs alert that stays until handled."""
+        self.hass.bus.async_fire(
+            EVENT_EMERGENCY,
+            {"entry_id": self.entry.entry_id, "kind": kind, "text": event.text, "user": event.user},
+        )
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            f"emergency_{self.entry.entry_id}_{int(time.time())}",
+            is_fixable=True,
+            is_persistent=True,
+            severity=ir.IssueSeverity.CRITICAL,
+            translation_key="emergency",
+            translation_placeholders={"kind": kind, "text": event.text or ""},
+        )
 
 
 def link_child_devices(hass: HomeAssistant, hub: ProtegeHub) -> None:

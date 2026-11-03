@@ -41,6 +41,8 @@ class FakePanel:
         self.outputs = {1: ["CP001:01", 0], 2: ["CP001:02", 0]}
         self.inputs = {1: ["CP001:01", 0, 0], 2: ["CP001:02", 0, 0], 3: ["ZX001:01", 0, 0]}
         self.troubles = {1: ["CP001:01", 0, 0]}
+        # Inputs that must be closed (or bypassed) for an area to arm, as the panel's input types set it.
+        self.must_close: set[int] = set()
         self.serial = 0x00A1B2C3
         self.commands: list[tuple[int, int, int]] = []
         self.acks_received = 0
@@ -162,6 +164,11 @@ class FakePanel:
                 return [self._nack(p.NACK_USER_AXS_AREA)]
             if sub in (p.AREA_DISARM, p.AREA_DISARM_ALL, p.AREA_DISARM_24H):
                 table[index][0], table[index][2] = 0x00, 0x00
+            elif sub != p.AREA_ARM_FORCE and any(
+                self.inputs[i][1] and not self.inputs[i][2] for i in self.must_close
+            ):
+                # Like the panel: the request is accepted, but the area doesn't arm.
+                table[index][0] = 0x00
             else:
                 flags = {p.AREA_ARM_STAY: 0x40, p.AREA_ARM_INSTANT: 0x20, p.AREA_ARM_FORCE: 0x10}.get(sub, 0)
                 table[index][0], table[index][2] = 0x80, flags

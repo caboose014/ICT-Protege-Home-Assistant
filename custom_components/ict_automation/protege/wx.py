@@ -27,6 +27,11 @@ _LOGGER = logging.getLogger(__name__)
 PATH = "/PRT_CTRL_DIN_ISAPI.dll?"
 TIMEOUT = aiohttp.ClientTimeout(total=15)
 
+TABLE_INPUT_TYPES = "GXT_INPUTTYPES_TBL"
+# Each input can sit in up to four areas, each with its own input type.
+INPUT_AREA_SLOTS = ("1", "2", "3", "4")
+NO_RECORD = (-1, 0xFFFFFFFF)
+
 TABLES = {
     RecordType.DOOR: "GXT_DOORS_TBL",
     RecordType.AREA: "GXT_AREAS_TBL",
@@ -84,6 +89,43 @@ def parse_list(text: str) -> list[tuple[int, str]]:
         except ValueError:
             continue
     return sorted(items)
+
+
+def parse_detail(text: str) -> dict[str, str]:
+    """Parse a Detail reply ("Field=value&Field=value") into a dict."""
+    fields: dict[str, str] = {}
+    for pair in text.strip().split("&"):
+        if "=" in pair:
+            key, value = pair.split("=", 1)
+            fields[key.strip()] = _decode(value).strip()
+    return fields
+
+
+def _record_id(value: str | None) -> int | None:
+    try:
+        number = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return None if number in NO_RECORD or number < 0 else number
+
+
+# Input type options that let an input stay open while its area arms.
+# TODO(site): confirm the field name against a real GXT_INPUTTYPES_TBL detail reply.
+_ARM_OPEN_FIELDS: tuple[str, ...] = ()
+
+
+def allowed_open_when_arming(input_type: dict[str, str]) -> bool:
+    """True when this input type does not need to be closed for its area to arm."""
+    return any(input_type.get(name, "").lower() in ("true", "1", "yes") for name in _ARM_OPEN_FIELDS)
+
+
+@dataclass
+class WXSite:
+    """Everything read from the web interface in one login."""
+
+    lists: dict[RecordType, list[tuple[int, str]]]
+    inputs: dict[int, dict[str, str]]  # WX input id -> detail fields
+    input_types: dict[int, dict[str, str]]  # WX input type id -> detail fields
 
 
 @dataclass
@@ -151,14 +193,49 @@ class WXClient:
             raise WXError(f"Listing {record_type.value}s failed: {reply.strip()[:60]}")
         return parse_list(reply)
 
+    async def detail(self, table: str, rec_id: int) -> dict[str, str]:
+        """Every field of one record, or an empty dict if the operator may not see it."""
+        reply = await self._post(f"Request&Type=Detail&SubType={table}&RecId={rec_id}")
+        if _is_fail(reply):
+            return {}
+        return parse_detail(reply)
+
+    async def _lists(self) -> dict[RecordType, list[tuple[int, str]]]:
+        result = {}
+        for record_type in TABLES:
+            result[record_type] = await self.list(record_type)
+            await asyncio.sleep(0)
+        return result
+
     async def fetch_all(self) -> dict[RecordType, list[tuple[int, str]]]:
         await self.login()
         try:
-            result = {}
-            for record_type in TABLES:
-                result[record_type] = await self.list(record_type)
-                await asyncio.sleep(0)
-            return result
+            return await self._lists()
+        finally:
+            await self.logout()
+
+    async def fetch_site(self) -> WXSite:
+        """Names, plus each input's areas and input types, in one login.
+
+        This is programming, not live state, so it is read once (at start-up and on
+        Rescan) and the session is closed straight away.
+        """
+        await self.login()
+        try:
+            lists = await self._lists()
+            inputs: dict[int, dict[str, str]] = {}
+            for rec_id, _ in lists.get(RecordType.INPUT, []):
+                inputs[rec_id] = await self.detail(TABLES[RecordType.INPUT], rec_id)
+            type_ids = {
+                type_id
+                for fields in inputs.values()
+                for slot in INPUT_AREA_SLOTS
+                if (type_id := _record_id(fields.get(f"ZoneType{slot}"))) is not None
+            }
+            input_types = {
+                type_id: await self.detail(TABLE_INPUT_TYPES, type_id) for type_id in sorted(type_ids)
+            }
+            return WXSite(lists, inputs, input_types)
         finally:
             await self.logout()
 
@@ -189,3 +266,34 @@ def apply_names(records: list[Record], lists: dict[RecordType, list[tuple[int, s
                 record.name = label
                 named += 1
     return named
+
+
+def apply_zone_settings(records: list[Record], site: WXSite) -> int:
+    """Give inputs their areas, and the areas where they may be open when arming.
+
+    WX ids map to ACS records by position, as for names. Returns how many inputs were set.
+    """
+    areas = sorted((r for r in records if r.record_type is RecordType.AREA), key=lambda r: r.index)
+    inputs = sorted((r for r in records if r.record_type is RecordType.INPUT), key=lambda r: r.index)
+    wx_areas = site.lists.get(RecordType.AREA, [])
+    wx_inputs = site.lists.get(RecordType.INPUT, [])
+    if len(areas) != len(wx_areas) or len(inputs) != len(wx_inputs):
+        _LOGGER.warning("Not reading zone settings: the web interface and the panel list different records")
+        return 0
+    area_index = {wx_id: record.index for (wx_id, _), record in zip(wx_areas, areas)}
+    updated = 0
+    for record, (wx_id, _) in zip(inputs, wx_inputs):
+        fields = site.inputs.get(wx_id)
+        if not fields:
+            continue  # the operator can't read this input's details
+        record.areas, record.arm_open = [], []
+        for slot in INPUT_AREA_SLOTS:
+            index = area_index.get(_record_id(fields.get(f"Area{slot}")))
+            if index is None or index in record.areas:
+                continue
+            record.areas.append(index)
+            input_type = site.input_types.get(_record_id(fields.get(f"ZoneType{slot}")))
+            if input_type and allowed_open_when_arming(input_type):
+                record.arm_open.append(index)
+        updated += 1
+    return updated

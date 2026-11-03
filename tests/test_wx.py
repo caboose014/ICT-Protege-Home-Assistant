@@ -10,13 +10,25 @@ from custom_components.ict_automation.protege import Record, RecordType
 from custom_components.ict_automation.protege.wx import (
     WXAuthError,
     WXClient,
+    WXSite,
     apply_names,
+    apply_zone_settings,
     login_params,
     parse_list,
     xor_hex,
 )
 
 RAND = 0x1234ABCD
+# Input 1 is in Soundline (WX area 16) as type 5; input 14's details are hidden from the operator.
+DETAILS = {
+    (
+        "GXT_INPUTS_TBL",
+        0,
+    ): "Name=Front Door Reed&Area1=0&ZoneType1=4&Area2=16&ZoneType2=5&Area3=-1&ZoneType3=-1",
+    ("GXT_INPUTS_TBL", 1): "Name=Front Door PTE&Area1=16&ZoneType1=5&Area2=4294967295",
+    ("GXT_INPUTTYPES_TBL", 4): "Name=Instant&AllowOpen=false",
+    ("GXT_INPUTTYPES_TBL", 5): "Name=Entry Delay&AllowOpen=true",
+}
 LISTS = {
     "GXT_DOORS_TBL": "0=Front Door&1=Jail Gate",
     "GXT_AREAS_TBL": "0=System Area&16=Soundline",
@@ -70,6 +82,10 @@ async def wx_server(socket_enabled, aiohttp_server):
             return web.Response(text="FAIL")
         if query.startswith("Request&Type=List&SubType="):
             return web.Response(text=LISTS[request.query["SubType"]])
+        if query.startswith("Request&Type=Detail&SubType="):
+            table, rec_id = request.query["SubType"], int(request.query["RecId"])
+            if (table, rec_id) in DETAILS:
+                return web.Response(text=DETAILS[(table, rec_id)])
         return web.Response(text="Request Failed")
 
     app = web.Application()
@@ -96,3 +112,57 @@ async def test_wrong_password_is_reported(wx_server):
         client = WXClient(session, "127.0.0.1", "testuser", "wrong", wx_server.port, scheme="http")
         with pytest.raises(WXAuthError):
             await client.fetch_all()
+
+
+async def test_fetch_site_reads_input_details_once_and_logs_out(wx_server):
+    async with aiohttp.ClientSession() as session:
+        client = WXClient(session, "127.0.0.1", "testuser", "secret", wx_server.port, scheme="http")
+        site = await client.fetch_site()
+    assert site.inputs[0]["Area2"] == "16"
+    assert site.inputs[14] == {}  # not permitted: left out, not an error
+    assert sorted(site.input_types) == [4, 5]
+    sent = wx_server.state["requests"]
+    assert sent[-1].startswith("Command&Type=Session&SubType=CloseSession")
+    assert sum(q.startswith("Command&Type=Session&SubType=InitSession") for q in sent) == 1
+    assert all(
+        q.startswith(("Command&Type=Session&", "Request&Type=List&", "Request&Type=Detail&")) for q in sent
+    )
+
+
+def test_zone_settings_map_wx_ids_to_panel_records(monkeypatch):
+    from custom_components.ict_automation.protege import wx
+
+    monkeypatch.setattr(wx, "_ARM_OPEN_FIELDS", ("AllowOpen",))
+    records = [Record(RecordType.AREA, 1), Record(RecordType.AREA, 2)]
+    records += [Record(RecordType.INPUT, i) for i in (1, 2, 3)]
+    site = WXSite(
+        lists={
+            RecordType.AREA: [(0, "System Area"), (16, "Soundline")],
+            RecordType.INPUT: [(0, "Reed"), (1, "PTE"), (14, "PIR")],
+        },
+        inputs={
+            0: wx.parse_detail(DETAILS[("GXT_INPUTS_TBL", 0)]),
+            1: wx.parse_detail(DETAILS[("GXT_INPUTS_TBL", 1)]),
+            14: {},
+        },
+        input_types={
+            4: wx.parse_detail(DETAILS[("GXT_INPUTTYPES_TBL", 4)]),
+            5: wx.parse_detail(DETAILS[("GXT_INPUTTYPES_TBL", 5)]),
+        },
+    )
+    assert apply_zone_settings(records, site) == 2
+    reed, pte, pir = records[2:]
+    assert (reed.areas, reed.arm_open) == ([1, 2], [2])
+    assert (pte.areas, pte.arm_open) == ([2], [2])
+    assert (pir.areas, pir.arm_open) == (None, None)
+
+
+def test_zone_settings_need_matching_counts():
+    records = [Record(RecordType.AREA, 1), Record(RecordType.INPUT, 1)]
+    site = WXSite(
+        lists={RecordType.AREA: [], RecordType.INPUT: [(0, "Reed")]},
+        inputs={0: {"Area1": "0"}},
+        input_types={},
+    )
+    assert apply_zone_settings(records, site) == 0
+    assert records[1].areas is None

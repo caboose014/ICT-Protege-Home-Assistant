@@ -24,6 +24,8 @@ async def async_setup_entry(
     for record in hub.records_of(RecordType.AREA):
         entities.append(ProtegeAreaFlag(hub, record, "alarm"))
         entities.append(ProtegeAreaFlag(hub, record, "siren"))
+        if hub.zones_known:
+            entities.append(ProtegeReadyToArm(hub, record))
     for record in hub.records_of(RecordType.INPUT):
         entities.append(ProtegeInput(hub, record))
     for record in hub.records_of(RecordType.TROUBLE_INPUT):
@@ -56,6 +58,24 @@ class ProtegeAreaFlag(ProtegeEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool | None:
         return None if self.status is None else getattr(self.status, self._flag)
+
+
+class ProtegeReadyToArm(ProtegeEntity, BinarySensorEntity):
+    """On when no open zone stops the area arming."""
+
+    _attr_translation_key = "ready_to_arm"
+
+    def __init__(self, hub, record) -> None:
+        super().__init__(hub, record, "ready_to_arm", hub.record_device(record))
+
+    @property
+    def is_on(self) -> bool | None:
+        zones = self.hub.open_zones(self.record.index)
+        return None if zones is None else not zones
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"open_zones": self.hub.open_zones(self.record.index) or []}
 
 
 class ProtegeInput(ProtegeEntity, BinarySensorEntity):
