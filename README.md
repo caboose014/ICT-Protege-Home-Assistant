@@ -7,6 +7,11 @@
 Local, push-based control of **ICT Protege WX** panels through the panel's Automation and Control service.
 Enter the panel address and a PIN, and every door, area, input, output and trouble input is found and added automatically.
 
+> [!NOTE]
+> This integration needs the panel's **Automation and Control** service, which is a licensed feature.
+> If your WX doesn't have that licence, try [ha-protege-wx](https://github.com/olliemaller/ha-protege-wx) instead.
+> It works through the WX web interface, so it doesn't need the licence.
+
 ## What you get
 
 | Panel record | Home Assistant |
