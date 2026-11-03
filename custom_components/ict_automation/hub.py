@@ -152,6 +152,17 @@ class ProtegeHub:
     def record_device_id(self, record: Record) -> str:
         return f"{self.serial}_{record.record_type.value}_{record.index}"
 
+    @property
+    def modules(self) -> set[str]:
+        """Expansion modules with inputs or outputs (trouble inputs sit on the controller)."""
+        return {
+            r.module
+            for r in self.records
+            if r.module
+            and r.module != CONTROLLER_MODULE
+            and r.record_type in (RecordType.INPUT, RecordType.OUTPUT)
+        }
+
     def records_of(self, record_type: RecordType) -> list[Record]:
         return [r for r in self.records if r.record_type is record_type]
 
@@ -265,8 +276,7 @@ def remove_stale_devices(hass: HomeAssistant, hub: ProtegeHub) -> None:
     for record in hub.records:
         if record.record_type is not RecordType.TROUBLE_INPUT:
             valid.add((DOMAIN, hub.record_device_id(record)))
-        if record.module and record.module != CONTROLLER_MODULE:
-            valid.add((DOMAIN, f"{hub.serial}_module_{record.module}"))
+    valid.update((DOMAIN, f"{hub.serial}_module_{module}") for module in hub.modules)
     for device in dr.async_entries_for_config_entry(dev_reg, hub.entry.entry_id):
         if not device.identifiers & valid:
             dev_reg.async_update_device(device.id, remove_config_entry_id=hub.entry.entry_id)
