@@ -57,3 +57,11 @@ class ICTProtocolTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_event_text_keeps_fields_separated_by_nulls():
+    from custom_components.ict_automation.protege import protocol as p
+    from custom_components.ict_automation.protege.models import decode_event
+
+    block = p.ICTDataBlock(0x01, 0x30, b"Door\x00Front Door\x00Unlocked\x00")
+    assert decode_event(block).text == "Door Front Door Unlocked"
