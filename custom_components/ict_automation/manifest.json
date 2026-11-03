@@ -10,5 +10,5 @@
   "issue_tracker": "https://github.com/caboose014/ICT-Protege-Home-Assistant/issues",
   "loggers": ["custom_components.ict_automation.protege"],
   "requirements": [],
-  "version": "2.0.0"
+  "version": "2.1.0"
 }
