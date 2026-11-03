@@ -169,6 +169,11 @@ class InputStatus:
         return self.state != InputState.CLOSED
 
     @property
+    def tampered(self) -> bool:
+        """A tamper or short on the input's wiring."""
+        return self.state in (InputState.SHORT, InputState.TAMPER)
+
+    @property
     def bypassed(self) -> bool:
         return bool(self.bypass_flags & 0x01)
 
