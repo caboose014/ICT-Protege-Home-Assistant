@@ -30,6 +30,7 @@ from .models import (
 _LOGGER = logging.getLogger(__name__)
 
 MAX_MONITORED = 250
+MONITOR_BATCH = 10
 MONITOR_PRIORITY = (
     RecordType.AREA,
     RecordType.DOOR,
@@ -237,10 +238,19 @@ class ProtegeConnection:
     async def command_batch(self, packets: list[bytes], *, timeout: float | None = None) -> list[p.ICTPacket]:
         """Send several commands back to back and collect one system reply each."""
         futures = [self._add_waiter(_is_system) for _ in packets]
-        await self.write(b"".join(packets))
         results: list[p.ICTPacket] = []
-        for future in futures:
-            results.append(await self._await(future, timeout))
+        try:
+            await self.write(b"".join(packets))
+            for future in futures:
+                results.append(await self._await(future, timeout))
+        finally:
+            pending = {id(f) for f in futures if not f.done()}
+            self._waiters = [w for w in self._waiters if id(w.future) not in pending]
+            for future in futures:
+                if future.done() and not future.cancelled():
+                    future.exception()  # mark retrieved
+                else:
+                    future.cancel()
         return results
 
 
@@ -320,6 +330,7 @@ class ProtegeClient:
         self._polled: list[Record] = []
         self._tasks: list[asyncio.Task] = []
         self._background: set[asyncio.Task] = set()
+        self._command_generation = 0
         self._stopping = False
         self._available = False
 
@@ -477,17 +488,40 @@ class ProtegeClient:
             # Everything is re-read periodically, not just records beyond the monitoring limit.
             await self.refresh_all()
 
-    async def _restore_monitoring(self) -> None:
-        """(Re)register monitoring for all records; the panel resets it on login/logout."""
+    async def _restore_monitoring(self, *, generation: int | None = None) -> bool:
+        """(Re)register monitoring for all records; the panel resets it on login/logout.
+
+        The panel takes roughly 80 ms per monitor request, so a large site takes several
+        seconds. The connection lock is released between small batches so commands and
+        read-backs are not stuck behind it. When `generation` is given and another command
+        starts meanwhile (which resets monitoring again), stop and return False; that
+        command restores monitoring itself.
+        """
         packets = [p.build_monitor(r.record_type.group, r.index) for r in self._monitored]
-        async with self._conn.lock:
-            for start in range(0, len(packets), 25):
-                replies = await self._conn.command_batch(packets[start : start + 25])
-                for record, reply in zip(self._monitored[start : start + 25], replies):
-                    if reply.is_nack:
-                        if reply.nack_code == p.NACK_USER_LOGOUT:
-                            raise CommandRejected(reply.nack_code)
-                        _LOGGER.debug("Monitoring %s rejected: %s", record.key, reply.nack_code)
+        for start in range(0, len(packets), MONITOR_BATCH):
+            async with self._conn.lock:
+                if generation is not None and generation != self._command_generation:
+                    return False
+                replies = await self._conn.command_batch(packets[start : start + MONITOR_BATCH])
+            for record, reply in zip(self._monitored[start : start + MONITOR_BATCH], replies):
+                if reply.is_nack:
+                    if reply.nack_code == p.NACK_USER_LOGOUT:
+                        raise CommandRejected(reply.nack_code)
+                    _LOGGER.debug("Monitoring %s rejected: %s", record.key, reply.nack_code)
+        return True
+
+    async def _restore_after_command(self, generation: int, refresh_delay: float) -> None:
+        try:
+            if not await self._restore_monitoring(generation=generation):
+                return
+        except ProtegeError as err:
+            _LOGGER.warning("Could not restore monitoring after command: %s", err)
+            await self._conn.close()
+            return
+        # Catch anything that changed while monitoring was being re-registered.
+        await asyncio.sleep(refresh_delay)
+        if generation == self._command_generation:
+            await self.refresh_all()
 
     # ----- status and discovery -------------------------------------------
 
@@ -596,6 +630,8 @@ class ProtegeClient:
             raise CannotConnect("Not connected to the panel")
         error: ProtegeError | None = None
         async with self._conn.lock:
+            self._command_generation += 1
+            generation = self._command_generation
             await self._login(pin or self.pin)
             try:
                 await self._conn.command(raw)
@@ -608,19 +644,14 @@ class ProtegeClient:
         target = _command_target(raw)
         if error is None and assumed is not None and target is not None:
             self._apply(StatusUpdate(target[0], target[1], assumed))
-        try:
-            await self._restore_monitoring()
-        except ProtegeError as err:
-            _LOGGER.warning("Could not restore monitoring after command: %s", err)
-            await self._conn.close()
-        else:
-            # Not every panel honours the "force update" monitoring flag, and changes made
-            # while logged in are not pushed. Read the commanded record back explicitly, and
-            # again shortly after for doors and outputs that change state on a timer.
-            if target is not None:
-                await self._refresh(*target)
-                self._spawn(self._refresh_later(target, readback))
-            self._spawn(self._refresh_all_later(readback[-1] + 2 if readback else 2))
+        # Changes made while logged in are not pushed, and not every panel honours the
+        # "force update" monitoring flag. Read the commanded record back straight away and
+        # again over the next few seconds (doors and outputs change on timers), while
+        # monitoring is re-registered in the background.
+        if target is not None:
+            await self._refresh(*target)
+            self._spawn(self._refresh_later(target, readback))
+        self._spawn(self._restore_after_command(generation, 2.0))
         if error is not None:
             raise error
 
@@ -641,10 +672,6 @@ class ProtegeClient:
             if self._stopping or not self._conn.connected:
                 return
             await self._refresh(*target)
-
-    async def _refresh_all_later(self, delay: float) -> None:
-        await asyncio.sleep(delay)
-        await self.refresh_all()
 
     def _apply(self, update: StatusUpdate) -> None:
         self.status[(update.record_type, update.index)] = update.status

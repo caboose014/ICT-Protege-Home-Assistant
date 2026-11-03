@@ -80,7 +80,7 @@ async def test_monitoring_survives_commands(panel):
     # After the command the client logged out and re-registered monitoring.
     session = panel.sessions[0]
     assert session.user is None
-    assert (p.GROUP_INPUT, 3) in session.monitored
+    await _wait_until(lambda: (p.GROUP_INPUT, 3) in session.monitored)
 
     updates.clear()
     panel.set_input(3, 1)
@@ -172,4 +172,29 @@ async def test_command_shows_assumed_state_before_panel_reports(panel):
 
     await client.set_bypass(RecordType.INPUT, 2, True)
     assert client.status[(RecordType.INPUT, 2)].bypassed
+    await client.stop()
+
+
+async def test_commands_are_not_stuck_behind_monitoring_restore(panel, monkeypatch):
+    """Re-registering monitors is slow on a real panel; a second command must not wait for all of it."""
+    from custom_components.ict_automation.protege import client as client_mod
+
+    monkeypatch.setattr(client_mod, "MONITOR_BATCH", 2)
+    client = ProtegeClient("127.0.0.1", panel.port, "1234")
+    await client.connect()
+    records = await client.discover()
+    await client.start(records)
+    panel.monitor_delay = 0.1  # 9 records -> ~0.9 s to restore everything
+
+    await client.door_unlock_latched(1)
+    await asyncio.sleep(0.15)  # restore is now under way
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    await client.door_lock(1)
+    assert loop.time() - started < 0.6
+    assert client.status[(RecordType.DOOR, 1)].locked
+
+    # Monitoring still ends up fully restored after the last command.
+    session = panel.sessions[0]
+    await _wait_until(lambda: len(session.monitored) == len(records), timeout=3)
     await client.stop()

@@ -29,6 +29,7 @@ class FakePanel:
     def __init__(self, *, allow_status_logged_out: bool = True, force_update: bool = True) -> None:
         self.allow_status_logged_out = allow_status_logged_out
         self.force_update = force_update
+        self.monitor_delay = 0.0  # the real panel takes ~80 ms per monitor request
         self.users: dict[str, FakeUser] = {
             "1234": FakeUser(),  # saved integration PIN: doors and outputs, no arming
             "5678": FakeUser(doors=False, outputs=False, bypass=False, arm=True),  # a person
@@ -117,6 +118,8 @@ class FakePanel:
                 for raw in assembler.feed(chunk):
                     packet = p.parse_packet(raw)
                     if packet.packet_type == p.PKT_TYPE_COMMAND:
+                        if self.monitor_delay and packet.data[:2] == bytes((p.GROUP_SYSTEM, p.SYS_MONITOR)):
+                            await asyncio.sleep(self.monitor_delay)
                         for out in self._process(session, packet.data):
                             writer.write(out)
                 await writer.drain()
