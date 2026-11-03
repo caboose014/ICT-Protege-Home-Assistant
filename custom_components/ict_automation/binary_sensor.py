@@ -62,8 +62,8 @@ class ProtegeInput(ProtegeEntity, BinarySensorEntity):
     """An input (zone). Change its type with "Show as" in the entity settings."""
 
     def __init__(self, hub, record) -> None:
-        super().__init__(hub, record, "input", hub.module_device(record.module))
-        self._attr_name = record.default_name
+        super().__init__(hub, record, "input", hub.record_device(record))
+        self._attr_name = None  # the input's own device carries its name
 
     @property
     def is_on(self) -> bool | None:

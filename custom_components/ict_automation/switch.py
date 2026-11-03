@@ -44,8 +44,8 @@ async def async_setup_entry(
 
 class ProtegeOutput(ProtegeEntity, SwitchEntity):
     def __init__(self, hub, record) -> None:
-        super().__init__(hub, record, "output", hub.module_device(record.module))
-        self._attr_name = record.default_name
+        super().__init__(hub, record, "output", hub.record_device(record))
+        self._attr_name = None  # the output's own device carries its name
 
     @property
     def is_on(self) -> bool | None:
@@ -71,8 +71,7 @@ class ProtegeBypass(ProtegeEntity, SwitchEntity):
     _attr_translation_key = "bypass"
 
     def __init__(self, hub, record) -> None:
-        super().__init__(hub, record, "bypass", hub.module_device(record.module))
-        self._attr_translation_placeholders = {"name": record.default_name}
+        super().__init__(hub, record, "bypass", hub.record_device(record))
 
     @property
     def is_on(self) -> bool | None:
