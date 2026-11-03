@@ -57,6 +57,16 @@ To get panel events (entry granted, alarms, arming) as a Home Assistant event en
 
 The integration stays logged in on that service only to receive events, and never sends commands through it.
 
+### Optional: names from the WX web interface
+
+The control service carries no names, so the integration can read them from the
+controller's web interface instead. Enable HTTPS on the controller, create a WX
+operator that can only view programming, and enter it under **Configure > Names
+from the WX web interface**. Names are read on every start and when you press
+**Rescan**; anything you rename in Home Assistant keeps your name. Only the
+session login and List requests are sent, so the operator never changes
+programming. Requires firmware 4.00.1676 or later.
+
 ## Install
 
 ### Manual (side-load)

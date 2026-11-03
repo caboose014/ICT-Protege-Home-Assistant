@@ -65,6 +65,10 @@ async def test_options_flow_events(hass: HomeAssistant, panel: FakePanel) -> Non
     await events_panel.start()
     try:
         result = await hass.config_entries.options.async_init(entry.entry_id)
+        assert result["type"] is FlowResultType.MENU
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"next_step_id": "events"}
+        )
         result = await hass.config_entries.options.async_configure(
             result["flow_id"], {CONF_EVENTS_PORT: panel.port, CONF_EVENTS_PIN: "4321"}
         )

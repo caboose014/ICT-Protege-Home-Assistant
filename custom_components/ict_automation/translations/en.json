@@ -39,6 +39,25 @@
   "options": {
     "step": {
       "init": {
+        "title": "Options",
+        "menu_options": {
+          "names": "Names from the WX web interface",
+          "events": "Event logging"
+        }
+      },
+      "names": {
+        "title": "Names from the WX web interface",
+        "description": "The control service has no names, so they are read from the controller's web interface. Create a WX operator that can only view programming, and enter it here. Names are read on every start and when you press Rescan; names you change in Home Assistant are kept. Leave both fields empty to stop reading names.",
+        "data": {
+          "wx_username": "Operator name",
+          "wx_password": "Operator password",
+          "wx_port": "HTTPS port"
+        },
+        "data_description": {
+          "wx_port": "HTTPS must be enabled on the controller. Usually 443."
+        }
+      },
+      "events": {
         "title": "Event logging",
         "description": "Optional. Add a second Automation and Control service on the panel with its own port, and a view-only user with no control rights. The integration stays logged in on that service only to receive system events. Leave both fields empty to turn event logging off.",
         "data": {
@@ -53,7 +72,10 @@
       "panel_error": "The panel refused the event subscription.",
       "events_incomplete": "Enter both the port and the PIN, or leave both empty.",
       "events_same_port": "Use a separate service and port for events, not the control service.",
-      "unknown": "Unexpected error. See the logs for details."
+      "unknown": "Unexpected error. See the logs for details.",
+      "wx_incomplete": "Enter both the operator name and password, or leave both empty.",
+      "wx_invalid_auth": "The web interface rejected this operator name or password.",
+      "wx_cannot_connect": "Could not reach the web interface over HTTPS on that port."
     }
   },
   "entity": {

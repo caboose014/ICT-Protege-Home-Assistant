@@ -9,6 +9,11 @@ CONF_PIN = "pin"
 CONF_RECORDS = "records"
 CONF_EVENTS_PORT = "events_port"
 CONF_EVENTS_PIN = "events_pin"
+CONF_WX_USERNAME = "wx_username"
+CONF_WX_PASSWORD = "wx_password"
+CONF_WX_PORT = "wx_port"
+
+DEFAULT_WX_PORT = 443
 
 ARM_MODES = ["away", "home", "night"]
 

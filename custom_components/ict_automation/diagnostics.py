@@ -10,9 +10,9 @@ from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
 
 from . import ProtegeConfigEntry
-from .const import CONF_EVENTS_PIN, CONF_PIN
+from .const import CONF_EVENTS_PIN, CONF_PIN, CONF_WX_PASSWORD, CONF_WX_USERNAME
 
-TO_REDACT = {CONF_PIN, CONF_EVENTS_PIN, CONF_HOST}
+TO_REDACT = {CONF_PIN, CONF_EVENTS_PIN, CONF_HOST, CONF_WX_USERNAME, CONF_WX_PASSWORD}
 
 
 async def async_get_config_entry_diagnostics(
