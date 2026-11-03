@@ -71,6 +71,6 @@ class ProtegePanelEvent(EventEntity):
     def _handle(self, event: PanelEvent) -> None:
         self._trigger_event(
             classify(event),
-            {"text": event.text, "category": event.category, "code": event.code},
+            {"text": event.text, "category": event.category, "user": event.user, "code": event.code},
         )
         self.async_write_ha_state()

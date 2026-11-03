@@ -37,3 +37,16 @@ def test_category_and_description_are_split():
     assert event.category == "Door"
     assert event.description == "Front Door Unlocked By REX"
     assert event.text == "Door Front Door Unlocked By REX"
+
+
+@pytest.mark.parametrize(
+    ("raw", "user"),
+    [
+        (b"User\x00Savant Unlocked Door Jail Gate At Savant\x00", "Savant"),
+        (b"User\x00Test User Logged Out At\x00", "Test User"),
+        (b"User\x00Savant Remote Login Savant\x00", "Savant"),
+        (b"Door\x00Front Door Unlocked By REX\x00", None),
+    ],
+)
+def test_user_is_extracted(raw, user):
+    assert _event(raw).user == user

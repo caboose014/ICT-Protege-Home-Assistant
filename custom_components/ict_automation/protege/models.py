@@ -255,6 +255,7 @@ class PanelInfo:
 @dataclass
 class PanelEvent:
     text: str | None = None
+    user: str | None = None
     category: str | None = None  # first field of a human readable event, e.g. "Door", "Input"
     description: str | None = None
     code: int | None = None
@@ -307,6 +308,33 @@ def decode_panel_info(blocks: list[p.ICTDataBlock], info: PanelInfo | None = Non
     return info
 
 
+# Words that follow the user's name in "User" events, e.g. "Savant Unlocked Door Jail Gate At Savant".
+_USER_ACTIONS = (
+    " Remote Login",
+    " Logged In",
+    " Logged Out",
+    " Entry Granted",
+    " Exit Granted",
+    " Access Granted",
+    " Access Denied",
+    " Denied",
+    " Granted",
+    " Unlocked",
+    " Locked",
+    " Disarmed",
+    " Armed",
+)
+
+
+def event_user(event: PanelEvent) -> str | None:
+    """The user a "User" event names, if it can be found."""
+    if (event.category or "").lower() != "user" or not event.description:
+        return None
+    text = event.description
+    cut = min((i for a in _USER_ACTIONS if (i := text.find(a)) > 0), default=-1)
+    return text[:cut].strip() or None if cut > 0 else None
+
+
 def decode_event(block: p.ICTDataBlock) -> PanelEvent | None:
     # The spec's tables give these as high byte 0x30, but its packet layouts put 0x30 first,
     # so accept either byte order.
@@ -319,7 +347,9 @@ def decode_event(block: p.ICTDataBlock) -> PanelEvent | None:
             return None
         category = parts[0] if len(parts) > 1 else None
         description = " ".join(parts[1:]) if len(parts) > 1 else parts[0]
-        return PanelEvent(text=" ".join(parts), category=category, description=description)
+        event = PanelEvent(text=" ".join(parts), category=category, description=description)
+        event.user = event_user(event)
+        return event
     if block.data_type in (p.DATA_EVENT_NUMERIC, p.DATA_EVENT_NUMERIC[::-1]) and len(block.body) >= 2:
         return PanelEvent(code=struct.unpack("<H", block.body[:2])[0], data=bytes(block.body[2:8]))
     return None
