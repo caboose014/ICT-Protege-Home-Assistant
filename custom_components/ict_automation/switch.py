@@ -6,7 +6,6 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant.components.switch import SwitchEntity
-from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
@@ -69,7 +68,6 @@ class ProtegeOutput(ProtegeEntity, SwitchEntity):
 class ProtegeBypass(ProtegeEntity, SwitchEntity):
     """On = bypassed (until the area next disarms). Use the bypass action for permanent."""
 
-    _attr_entity_category = EntityCategory.CONFIG
     _attr_translation_key = "bypass"
 
     def __init__(self, hub, record) -> None:

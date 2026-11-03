@@ -19,12 +19,18 @@ from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import ProtegeConfigEntry
-from .const import DOMAIN
+from .const import ARM_MODES, CONF_ARM_MODES, DOMAIN
 from .entity import ProtegeEntity
 from .protege import AreaState, AreaStatus, RecordType
 from .protege import protocol as p
 
 SERVICE_FORCE_ARM = "force_arm"
+
+_FEATURES = {
+    "away": AlarmControlPanelEntityFeature.ARM_AWAY,
+    "home": AlarmControlPanelEntityFeature.ARM_HOME,
+    "night": AlarmControlPanelEntityFeature.ARM_NIGHT,
+}
 
 
 async def async_setup_entry(
@@ -44,14 +50,15 @@ class ProtegeArea(ProtegeEntity, AlarmControlPanelEntity):
     _attr_name = None
     _attr_code_format = CodeFormat.NUMBER
     _attr_code_arm_required = True
-    _attr_supported_features = (
-        AlarmControlPanelEntityFeature.ARM_AWAY
-        | AlarmControlPanelEntityFeature.ARM_HOME
-        | AlarmControlPanelEntityFeature.ARM_NIGHT
-    )
 
     def __init__(self, hub, record) -> None:
         super().__init__(hub, record, "area", hub.record_device(record))
+        modes = hub.entry.options.get(CONF_ARM_MODES, ARM_MODES)
+        features = AlarmControlPanelEntityFeature(0)
+        for mode in modes:
+            features |= _FEATURES.get(mode, AlarmControlPanelEntityFeature(0))
+        self._attr_supported_features = features
+        self._modes = set(modes)
 
     @property
     def alarm_state(self) -> AlarmControlPanelState | None:
@@ -87,7 +94,9 @@ class ProtegeArea(ProtegeEntity, AlarmControlPanelEntity):
             "siren": status.siren,
         }
 
-    async def _area(self, sub_command: int, code: str | None) -> None:
+    async def _area(self, sub_command: int, code: str | None, mode: str | None = None) -> None:
+        if mode is not None and mode not in self._modes:
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="arm_mode_disabled")
         if not code:
             raise ServiceValidationError(translation_domain=DOMAIN, translation_key="code_required")
         await self._run(self.hub.client.area_command(self.record.index, sub_command, code))
@@ -96,13 +105,13 @@ class ProtegeArea(ProtegeEntity, AlarmControlPanelEntity):
         await self._area(p.AREA_DISARM_ALL, code)
 
     async def async_alarm_arm_away(self, code: str | None = None) -> None:
-        await self._area(p.AREA_ARM_NORMAL, code)
+        await self._area(p.AREA_ARM_NORMAL, code, "away")
 
     async def async_alarm_arm_home(self, code: str | None = None) -> None:
-        await self._area(p.AREA_ARM_STAY, code)
+        await self._area(p.AREA_ARM_STAY, code, "home")
 
     async def async_alarm_arm_night(self, code: str | None = None) -> None:
-        await self._area(p.AREA_ARM_INSTANT, code)
+        await self._area(p.AREA_ARM_INSTANT, code, "night")
 
     async def async_force_arm(self, code: str) -> None:
         await self._area(p.AREA_ARM_FORCE, code)

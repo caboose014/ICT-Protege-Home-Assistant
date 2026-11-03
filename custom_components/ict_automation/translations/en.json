@@ -39,11 +39,15 @@
   "options": {
     "step": {
       "init": {
-        "title": "Event logging",
-        "description": "Optional. Add a second Automation and Control service on the panel with its own port, and a view-only user with no control rights. The integration stays logged in on that service only to receive system events. Leave both fields empty to turn event logging off.",
+        "title": "Options",
+        "description": "Choose which arm modes to show on area panels. Event logging is optional: add a second Automation and Control service on the panel with its own port, and a view-only user with no control rights. The integration stays logged in on that service only to receive system events. Leave both event fields empty to turn event logging off.",
         "data": {
+          "arm_modes": "Arm modes",
           "events_port": "Events service port",
           "events_pin": "View-only user PIN"
+        },
+        "data_description": {
+          "arm_modes": "Away arms normally, Home arms in stay mode and Night arms in instant mode. Untick any your site does not use."
         }
       }
     },
@@ -134,6 +138,9 @@
     },
     "timed_outputs_only": {
       "message": "Timed on only applies to outputs."
+    },
+    "arm_mode_disabled": {
+      "message": "This arm mode is turned off in the integration options."
     }
   },
   "services": {
@@ -165,6 +172,15 @@
           "name": "Permanent",
           "description": "Keep the bypass until it is removed."
         }
+      }
+    }
+  },
+  "selector": {
+    "arm_modes": {
+      "options": {
+        "away": "Away (normal arm)",
+        "home": "Home (stay arm)",
+        "night": "Night (instant arm)"
       }
     }
   }
