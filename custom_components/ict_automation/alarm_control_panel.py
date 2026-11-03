@@ -19,7 +19,7 @@ from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import ProtegeConfigEntry
-from .const import ARM_MODES, CONF_ARM_MODES, DOMAIN
+from .const import ARM_MODES, DOMAIN
 from .entity import ProtegeEntity
 from .protege import AreaState, AreaStatus, RecordType
 from .protege import protocol as p
@@ -53,12 +53,18 @@ class ProtegeArea(ProtegeEntity, AlarmControlPanelEntity):
 
     def __init__(self, hub, record) -> None:
         super().__init__(hub, record, "area", hub.record_device(record))
-        modes = hub.entry.options.get(CONF_ARM_MODES, ARM_MODES)
+
+    @property
+    def _modes(self) -> set[str]:
+        return set(ARM_MODES) - self.hub.disabled_arm_modes[self.record.index]
+
+    @property
+    def supported_features(self) -> AlarmControlPanelEntityFeature:
+        """Arm modes can be turned off per area with the area's configuration switches."""
         features = AlarmControlPanelEntityFeature(0)
-        for mode in modes:
-            features |= _FEATURES.get(mode, AlarmControlPanelEntityFeature(0))
-        self._attr_supported_features = features
-        self._modes = set(modes)
+        for mode in self._modes:
+            features |= _FEATURES[mode]
+        return features
 
     @property
     def alarm_state(self) -> AlarmControlPanelState | None:

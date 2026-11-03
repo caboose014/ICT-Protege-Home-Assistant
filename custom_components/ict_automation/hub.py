@@ -57,6 +57,8 @@ class ProtegeHub:
         self._availability_listeners: list[CALLBACK_TYPE] = []
         self._event_listeners: list[Callable[[PanelEvent], None]] = []
         self._unsubs: list[CALLBACK_TYPE] = []
+        # Arm modes turned off per area index, set by each area's arm mode switches.
+        self.disabled_arm_modes: dict[int, set[str]] = defaultdict(set)
 
     # ----- identity -------------------------------------------------------
 
@@ -156,6 +158,16 @@ class ProtegeHub:
     def async_add_event_listener(self, listener: Callable[[PanelEvent], None]) -> CALLBACK_TYPE:
         self._event_listeners.append(listener)
         return lambda: self._event_listeners.remove(listener)
+
+    @callback
+    def async_set_arm_mode(self, area_index: int, mode: str, enabled: bool) -> None:
+        disabled = self.disabled_arm_modes[area_index]
+        if enabled:
+            disabled.discard(mode)
+        else:
+            disabled.add(mode)
+        for listener in list(self._listeners.get((RecordType.AREA, area_index), ())):
+            listener()
 
     @callback
     def _on_status(self, update: StatusUpdate) -> None:

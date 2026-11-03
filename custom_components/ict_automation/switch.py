@@ -6,14 +6,16 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant.components.switch import SwitchEntity
+from homeassistant.const import STATE_OFF, EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 
 from . import ProtegeConfigEntry
-from .const import DOMAIN
+from .const import ARM_MODES, DOMAIN
 from .entity import ProtegeEntity
 from .protege import RecordType
 
@@ -29,6 +31,9 @@ async def async_setup_entry(
     hub = entry.runtime_data
     entities: list[SwitchEntity] = [ProtegeOutput(hub, r) for r in hub.records_of(RecordType.OUTPUT)]
     entities.extend(ProtegeBypass(hub, r) for r in hub.records_of(RecordType.INPUT))
+    entities.extend(
+        ProtegeArmModeSwitch(hub, r, mode) for r in hub.records_of(RecordType.AREA) for mode in ARM_MODES
+    )
     async_add_entities(entities)
 
     platform = entity_platform.async_get_current_platform()
@@ -94,3 +99,34 @@ class ProtegeBypass(ProtegeEntity, SwitchEntity):
 
     async def async_turn_on_for(self, duration) -> None:
         raise ServiceValidationError(translation_domain=DOMAIN, translation_key="timed_outputs_only")
+
+
+class ProtegeArmModeSwitch(ProtegeEntity, SwitchEntity, RestoreEntity):
+    """Offer or hide one arm mode on an area's alarm panel. Kept in HA only, not on the panel."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, hub, record, mode: str) -> None:
+        super().__init__(hub, record, f"arm_mode_{mode}", hub.record_device(record))
+        self._mode = mode
+        self._attr_translation_key = f"arm_mode_{mode}"
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    @property
+    def is_on(self) -> bool:
+        return self._mode not in self.hub.disabled_arm_modes[self.record.index]
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        if last is not None and last.state == STATE_OFF:
+            self.hub.async_set_arm_mode(self.record.index, self._mode, False)
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        self.hub.async_set_arm_mode(self.record.index, self._mode, True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        self.hub.async_set_arm_mode(self.record.index, self._mode, False)
