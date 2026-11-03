@@ -279,7 +279,7 @@ def remove_stale_devices(hass: HomeAssistant, hub: ProtegeHub) -> None:
     valid.update((DOMAIN, f"{hub.serial}_module_{module}") for module in hub.modules)
     for device in dr.async_entries_for_config_entry(dev_reg, hub.entry.entry_id):
         if not device.identifiers & valid:
-            dev_reg.async_update_device(device.id, remove_config_entry_id=hub.entry.entry_id)
+            dev_reg.async_remove_device(device.id)
 
 
 __all__ = ["CONF_PIN", "ProtegeHub", "records_from_data", "records_to_data", "remove_stale_devices"]

@@ -180,6 +180,10 @@ class ProtegeConnection:
                 self._waiters.remove(waiter)
                 consumed = True
                 break
+        if packet.packet_type == p.PKT_TYPE_DATA and not consumed:
+            # Pushed data (monitoring changes, events) must be acked, or the panel keeps
+            # resending it and can hold back later changes. Replies to requests are not acked.
+            asyncio.get_running_loop().create_task(self._send_ack())
         if packet.packet_type == p.PKT_TYPE_DATA and self._on_data is not None:
             # Data always goes to the listener, including replies to status requests.
             try:
@@ -188,6 +192,10 @@ class ProtegeConnection:
                 _LOGGER.exception("Error handling panel data")
         elif not consumed and packet.packet_type == p.PKT_TYPE_SYSTEM:
             _LOGGER.debug("Unmatched system packet %s", packet.data.hex())
+
+    async def _send_ack(self) -> None:
+        with contextlib.suppress(ProtegeError):
+            await self.write(p.build_ack())
 
     async def write(self, raw: bytes) -> None:
         if self._writer is None:
@@ -823,7 +831,7 @@ class ProtegeEventClient:
         self._listeners: list[EventListener] = []
         self._task: asyncio.Task | None = None
         self._stopping = False
-        self._pending_acks = 0
+        self._warned = False
         self.connected = False
 
     def add_listener(self, listener: EventListener) -> Callable[[], None]:
@@ -831,21 +839,14 @@ class ProtegeEventClient:
         return lambda: self._listeners.remove(listener)
 
     def _handle_data(self, packet: p.ICTPacket) -> None:
-        got_event = False
+        # The connection acks pushed data packets.
         for block in p.iter_data_blocks(packet.data):
             event = decode_event(block)
             if event is None:
+                _LOGGER.debug("Ignoring data block %s on the events service", block.data_type)
                 continue
-            got_event = True
             for listener in list(self._listeners):
                 listener(event)
-        if got_event:
-            # Ack in the background; harmless if the service does not expect it.
-            asyncio.get_running_loop().create_task(self._send_ack())
-
-    async def _send_ack(self) -> None:
-        with contextlib.suppress(ProtegeError):
-            await self._conn.write(p.build_ack())
 
     async def open(self) -> None:
         """Connect, log in, and subscribe to events. Raises on failure."""
@@ -884,8 +885,13 @@ class ProtegeEventClient:
                 try:
                     await self.open()
                     _LOGGER.info("Receiving ICT events from %s:%s", self.host, self.port)
+                    self._warned = False
                 except (ProtegeError, ValueError) as err:
-                    _LOGGER.debug("Event connection failed: %s", err)
+                    if not self._warned:
+                        _LOGGER.warning("Event logging on %s:%s failed: %s", self.host, self.port, err)
+                        self._warned = True
+                    else:
+                        _LOGGER.debug("Event connection failed: %s", err)
                     await asyncio.sleep(self.reconnect_interval)
                     continue
             try:

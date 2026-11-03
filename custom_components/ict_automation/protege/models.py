@@ -306,8 +306,10 @@ def decode_panel_info(blocks: list[p.ICTDataBlock], info: PanelInfo | None = Non
 
 
 def decode_event(block: p.ICTDataBlock) -> PanelEvent | None:
-    if block.data_type == p.DATA_EVENT_TEXT:
+    # The spec's tables give these as high byte 0x30, but its packet layouts put 0x30 first,
+    # so accept either byte order.
+    if block.data_type in (p.DATA_EVENT_TEXT, p.DATA_EVENT_TEXT[::-1]):
         return PanelEvent(text=block.body.split(b"\x00", 1)[0].decode("ascii", errors="replace").strip())
-    if block.data_type == p.DATA_EVENT_NUMERIC and len(block.body) >= 2:
+    if block.data_type in (p.DATA_EVENT_NUMERIC, p.DATA_EVENT_NUMERIC[::-1]) and len(block.body) >= 2:
         return PanelEvent(code=struct.unpack("<H", block.body[:2])[0], data=bytes(block.body[2:8]))
     return None
