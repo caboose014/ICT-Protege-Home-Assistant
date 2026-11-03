@@ -15,6 +15,7 @@ class _Session:
     user: str | None = None
     monitored: set[tuple[int, int]] = field(default_factory=set)
     events: bool = False
+    expects_acks: bool = True
 
 
 @dataclass
@@ -43,6 +44,7 @@ class FakePanel:
         self.serial = 0x00A1B2C3
         self.commands: list[tuple[int, int, int]] = []
         self.acks_received = 0
+        self.accept_ack_config = True
         self.sessions: list[_Session] = []
         self._server: asyncio.base_events.Server | None = None
         self.port = 0
@@ -214,6 +216,11 @@ class FakePanel:
             s.events = False
             return [self._ack()]
         if sub == p.SYS_SET_LOGIN_TIME:
+            return [self._ack()]
+        if sub == p.SYS_ACK_CONFIG:
+            if not self.accept_ack_config:
+                return [self._nack(p.NACK_SERVICE_COMMAND_NOT_VALID)]
+            s.expects_acks = bool(payload[1])
             return [self._ack()]
         if sub == p.SYS_MONITOR:
             group = payload[0]
