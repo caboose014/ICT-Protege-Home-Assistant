@@ -337,6 +337,8 @@ class ProtegeHub:
         if self.web:
             # The web client reads the event log itself.
             self._unsubs.append(self.client.add_listener(self._on_event))
+            self._unsubs.append(self.client.add_denied_listener(self._on_denied))
+            self._on_denied(set(self.client.denied))
             return
         port = self.entry.options.get(CONF_EVENTS_PORT)
         pin = self.entry.options.get(CONF_EVENTS_PIN)
@@ -393,6 +395,33 @@ class ProtegeHub:
         for key in [(update.record_type, update.index), *dependants]:
             for listener in list(self._listeners.get(key, ())):
                 listener()
+
+    @callback
+    def _on_denied(self, denied: set[RecordType]) -> None:
+        """Web-only mode: say which Monitoring boxes the operator's role is missing."""
+        issue_id = f"web_rights_{self.entry.entry_id}"
+        if not denied:
+            ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+            return
+        boxes = {
+            RecordType.AREA: "Areas",
+            RecordType.DOOR: "Doors",
+            RecordType.INPUT: "Inputs",
+            RecordType.OUTPUT: "Outputs",
+            RecordType.TROUBLE_INPUT: "Trouble Inputs",
+        }
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key="web_rights",
+            translation_placeholders={
+                "title": self.entry.title,
+                "boxes": ", ".join(sorted(boxes[t] for t in denied)),
+            },
+        )
 
     @callback
     def _on_connection(self, available: bool) -> None:

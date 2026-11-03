@@ -345,6 +345,10 @@
           "entry_missing": "This panel is no longer set up."
         }
       }
+    },
+    "web_rights": {
+      "title": "Web operator can't read everything on {title}",
+      "description": "The operator's role doesn't allow reading: {boxes}. Those entities stay unavailable. To use them, tick those boxes under Monitoring on the operator's role in the WX web interface; this alert clears by itself once they can be read. If you don't need them, disable those entities instead. Outputs is optional: it lets the operator switch every output, including sirens."
     }
   },
   "selector": {
