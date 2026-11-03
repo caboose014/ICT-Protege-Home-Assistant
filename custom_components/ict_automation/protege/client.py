@@ -33,6 +33,8 @@ MAX_MONITORED = 250
 MONITOR_BATCH = 10
 # Read a door back this long after it moves or is seen on a timed unlock.
 DOOR_WATCH_DELAYS = (0.3, 1.5, 4.0, 8.0, 15.0)
+# A single quick check after an output change or door event.
+DOOR_CHECK_DELAYS = (0.3,)
 _TIMED_UNLOCKS = {
     DoorLockState.UNLOCKED_USER,
     DoorLockState.UNLOCKED_USER_TIMED,
@@ -364,6 +366,7 @@ class ProtegeClient:
         self._background: set[asyncio.Task] = set()
         self._command_generation = 0
         self._door_watch: dict[int, asyncio.Task] = {}
+        self._door_check: dict[int, asyncio.Task] = {}
         self._stopping = False
         self._available = False
 
@@ -410,19 +413,27 @@ class ProtegeClient:
                 listener(update)
 
     def watch_doors(self) -> None:
-        """Read every door back over the next few seconds (e.g. after a door event)."""
+        """Read every door back once, shortly (e.g. after a door event or an output change).
+
+        If a door turns out to be on a timed unlock, _watch_door keeps reading it until it
+        relocks; otherwise one read is enough, which keeps busy outputs (keypad LEDs that
+        follow PIRs) from flooding the connection.
+        """
         for record in self.records.values():
             if record.record_type is RecordType.DOOR:
-                self._start_door_watch(record.index)
+                self._start_door_watch(record.index, DOOR_CHECK_DELAYS)
 
-    def _start_door_watch(self, index: int) -> None:
+    def _start_door_watch(self, index: int, delays: tuple[float, ...] | None = None) -> None:
         if self._stopping or not self._conn.connected:
             return
-        task = self._door_watch.get(index)
+        # Quick checks and full watches are tracked apart, so a check that finds a timed
+        # unlock can still start the full watch.
+        tasks = self._door_check if delays else self._door_watch
+        task = tasks.get(index)
         if task is not None and not task.done():
             return
-        task = asyncio.create_task(self._refresh_later((RecordType.DOOR, index), DOOR_WATCH_DELAYS))
-        self._door_watch[index] = task
+        task = asyncio.create_task(self._refresh_later((RecordType.DOOR, index), delays or DOOR_WATCH_DELAYS))
+        tasks[index] = task
         self._background.add(task)
         task.add_done_callback(self._background.discard)
 
