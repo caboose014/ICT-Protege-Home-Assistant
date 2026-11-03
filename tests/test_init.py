@@ -201,3 +201,28 @@ async def test_lock_state_updates_without_force_update(hass: HomeAssistant, pane
     await _settle(hass, lambda: hass.states.get("lock.door_1").state == "locked")
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
+
+
+async def test_arm_modes_can_be_turned_off_per_area(hass: HomeAssistant, entry) -> None:
+    panel_id = "alarm_control_panel.area_1"
+    assert hass.states.get(panel_id).attributes["supported_features"] == 7
+    ent_reg = er.async_get(hass)
+    night = ent_reg.async_get_entity_id("switch", DOMAIN, "00A1B2C3_area_1_arm_mode_night")
+    assert ent_reg.async_get(night).entity_category is not None  # sits under Configuration
+
+    await hass.services.async_call("switch", "turn_off", {"entity_id": night}, blocking=True)
+    await hass.async_block_till_done()
+    assert hass.states.get(panel_id).attributes["supported_features"] == 3  # away + home
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            "alarm_control_panel",
+            "alarm_arm_night",
+            {"entity_id": panel_id, "code": "5678"},
+            blocking=True,
+        )
+
+    # The choice survives a reload.
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert hass.states.get(night).state == "off"
+    assert hass.states.get(panel_id).attributes["supported_features"] == 3
