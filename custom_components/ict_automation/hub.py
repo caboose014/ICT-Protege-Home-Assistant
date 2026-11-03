@@ -181,10 +181,12 @@ def link_child_devices(hass: HomeAssistant, hub: ProtegeHub) -> None:
     Home Assistant releases deprecate.
     """
     dev_reg = dr.async_get(hass)
-    controller = dev_reg.async_get_device(identifiers={(DOMAIN, hub.serial)})
+    devices = dr.async_entries_for_config_entry(dev_reg, hub.entry.entry_id)
+    # Look the controller up within this entry: async_get_device is deprecated.
+    controller = next((d for d in devices if (DOMAIN, hub.serial) in d.identifiers), None)
     if controller is None:
         return
-    for device in dr.async_entries_for_config_entry(dev_reg, hub.entry.entry_id):
+    for device in devices:
         if device.id != controller.id and device.via_device_id != controller.id:
             dev_reg.async_update_device(device.id, via_device_id=controller.id)
 
