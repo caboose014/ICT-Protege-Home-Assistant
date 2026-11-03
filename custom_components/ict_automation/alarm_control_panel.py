@@ -21,7 +21,8 @@ from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import ProtegeConfigEntry
-from .const import ARM_MODES, DOMAIN
+from .codes import match_code
+from .const import ARM_MODES, CODE_MODE_HA, CONF_CODE_MODE, CONF_CODES, DOMAIN
 from .entity import ProtegeEntity
 from .protege import AreaState, AreaStatus, ProtegeError, RecordType
 from .protege import protocol as p
@@ -43,7 +44,7 @@ async def async_setup_entry(
     async_add_entities(ProtegeArea(hub, r) for r in hub.records_of(RecordType.AREA))
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service(
-        SERVICE_FORCE_ARM, {vol.Required(ATTR_CODE): cv.string}, "async_force_arm"
+        SERVICE_FORCE_ARM, {vol.Optional(ATTR_CODE): cv.string}, "async_force_arm"
     )
 
 
@@ -56,6 +57,32 @@ class ProtegeArea(ProtegeEntity, AlarmControlPanelEntity):
 
     def __init__(self, hub, record) -> None:
         super().__init__(hub, record, "area", hub.record_device(record))
+        # Web-only mode can run without codes (Home Assistant's own permissions only).
+        if not self._codes_needed:
+            self._attr_code_format = None
+            self._attr_code_arm_required = False
+
+    @property
+    def _codes_needed(self) -> bool:
+        return not self.hub.web or self.hub.entry.options.get(CONF_CODE_MODE, CODE_MODE_HA) == CODE_MODE_HA
+
+    async def _check_code(self, code: str | None) -> str | None:
+        """Check the code (the panel does over ACS; the integration does in web-only mode).
+
+        Returns the code to send to the panel.
+        """
+        if not self._codes_needed:
+            return None
+        if not code:
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="code_required")
+        if not self.hub.web:
+            return code
+        codes = self.hub.entry.options.get(CONF_CODES, [])
+        person = await self.hass.async_add_executor_job(match_code, codes, code)
+        if person is None:
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="code_invalid")
+        self._attr_changed_by = person
+        return None
 
     @property
     def _modes(self) -> set[str]:
@@ -106,9 +133,9 @@ class ProtegeArea(ProtegeEntity, AlarmControlPanelEntity):
     async def _area(self, sub_command: int, code: str | None, mode: str | None = None) -> None:
         if mode is not None and mode not in self._modes:
             raise ServiceValidationError(translation_domain=DOMAIN, translation_key="arm_mode_disabled")
-        if not code:
-            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="code_required")
-        await self._run(self.hub.client.area_command(self.record.index, sub_command, code))
+        panel_code = await self._check_code(code)
+        await self._run(self.hub.client.area_command(self.record.index, sub_command, panel_code))
+        self.async_write_ha_state()
         if mode is not None or sub_command == p.AREA_ARM_FORCE:
             await self._check_armed()
 
@@ -143,5 +170,5 @@ class ProtegeArea(ProtegeEntity, AlarmControlPanelEntity):
     async def async_alarm_arm_night(self, code: str | None = None) -> None:
         await self._area(p.AREA_ARM_INSTANT, code, "night")
 
-    async def async_force_arm(self, code: str) -> None:
+    async def async_force_arm(self, code: str | None = None) -> None:
         await self._area(p.AREA_ARM_FORCE, code)

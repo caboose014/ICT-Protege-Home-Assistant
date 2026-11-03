@@ -1,8 +1,23 @@
 {
   "config": {
     "step": {
+      "reconfigure": {
+        "title": "Update connection",
+        "data": {
+          "host": "Host",
+          "port": "Automation and Control port",
+          "pin": "Integration PIN"
+        }
+      },
       "user": {
-        "title": "Connect to your ICT Protege panel",
+        "title": "How should Home Assistant connect to your ICT Protege?",
+        "menu_options": {
+          "acs": "Automation and Control service (recommended, needs the Automation licence)",
+          "web": "Web interface only (no licence needed)"
+        }
+      },
+      "acs": {
+        "title": "Automation and Control service",
         "description": "Uses the panel's Automation and Control service. Every door, area, input and output is found automatically.",
         "data": {
           "host": "Host",
@@ -15,12 +30,36 @@
           "pin": "A user PIN with rights to doors, outputs and bypass. It does not need arm or disarm rights: arming always asks for the person's own code."
         }
       },
-      "reconfigure": {
+      "web": {
+        "title": "Web interface only",
+        "description": "For controllers without the Automation and Integration licence. If yours has it, go back and choose the Automation and Control service instead: it is pushed live, while the web interface has to be polled every couple of seconds.\n\nCreate a WX operator just for Home Assistant, with rights to view status and the event log and to control only the areas, doors and outputs you want. Don't give it programming or user management rights. A session timeout of about 15 minutes is a good choice. HTTPS must be enabled (firmware 4.00.1676 or later).",
+        "data": {
+          "host": "Host",
+          "port": "HTTPS port",
+          "username": "Operator name",
+          "password": "Operator password",
+          "code_mode": "Arming codes"
+        },
+        "data_description": {
+          "port": "Usually 443.",
+          "code_mode": "The web interface arms as the operator and never sees a code, so Home Assistant checks it. Add people and their codes under Configure afterwards."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Operator login rejected",
+        "description": "The web interface rejected the operator name or password. Logins have stopped so the operator doesn't get locked out. Enter the details again.",
+        "data": {
+          "username": "Operator name",
+          "password": "Operator password"
+        }
+      },
+      "reconfigure_web": {
         "title": "Update connection",
         "data": {
           "host": "Host",
-          "port": "Automation and Control port",
-          "pin": "Integration PIN"
+          "port": "HTTPS port",
+          "username": "Operator name",
+          "password": "Operator password"
         }
       }
     },
@@ -28,12 +67,14 @@
       "cannot_connect": "Could not connect. Check the host, the port, and that the Automation and Control service is enabled.",
       "invalid_pin": "The panel rejected this PIN.",
       "panel_error": "The panel refused a request. Check that \"Allow Status Requests When Not Logged In\" is enabled on the service, and the logs for details.",
-      "unknown": "Unexpected error. See the logs for details."
+      "unknown": "Unexpected error. See the logs for details.",
+      "web_invalid_auth": "The web interface rejected this operator name or password."
     },
     "abort": {
       "already_configured": "This panel is already set up.",
       "reconfigure_successful": "Connection updated.",
-      "wrong_panel": "That address belongs to a different panel."
+      "wrong_panel": "That address belongs to a different panel.",
+      "reauth_successful": "Login updated."
     }
   },
   "options": {
@@ -64,6 +105,19 @@
           "events_port": "Events service port",
           "events_pin": "View-only user PIN"
         }
+      },
+      "codes": {
+        "title": "Arming codes",
+        "description": "In web-only mode the panel never sees a code, so Home Assistant checks it. People with codes: {people}.",
+        "data": {
+          "code_mode": "Arming codes",
+          "add_name": "Add a person",
+          "add_code": "Their code",
+          "remove": "Remove"
+        },
+        "data_description": {
+          "add_code": "At least 4 digits. Stored only as a salted hash."
+        }
       }
     },
     "error": {
@@ -75,7 +129,10 @@
       "unknown": "Unexpected error. See the logs for details.",
       "wx_incomplete": "Enter both the operator name and password, or leave both empty.",
       "wx_invalid_auth": "The web interface rejected this operator name or password.",
-      "wx_cannot_connect": "Could not reach the web interface over HTTPS on that port."
+      "wx_cannot_connect": "Could not reach the web interface over HTTPS on that port.",
+      "code_incomplete": "Enter both a name and a code.",
+      "code_too_short": "Use at least 4 digits.",
+      "code_name_taken": "That person already has a code. Remove it first to change it."
     }
   },
   "entity": {
@@ -192,6 +249,9 @@
     },
     "arm_failed": {
       "message": "The area didn't arm. The panel reports open zones."
+    },
+    "code_invalid": {
+      "message": "That code isn't recognised."
     }
   },
   "services": {
@@ -236,6 +296,14 @@
             "description": "The panel reported: {text}\n\nSubmit to mark it handled."
           }
         }
+      }
+    }
+  },
+  "selector": {
+    "code_mode": {
+      "options": {
+        "ha_codes": "Each person's own code, checked by Home Assistant",
+        "none": "No code (Home Assistant permissions only)"
       }
     }
   }
