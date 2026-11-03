@@ -13,7 +13,6 @@ from homeassistant.helpers import entity_registry as er
 
 from .const import CONF_PIN, CONF_RECORDS
 from .hub import (
-    CONTROLLER_MODULE,
     ProtegeHub,
     async_name_records,
     link_child_devices,
