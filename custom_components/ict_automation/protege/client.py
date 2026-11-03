@@ -111,8 +111,8 @@ class ProtegeConnection:
         self.lock = asyncio.Lock()
         self.closed = asyncio.Event()
         self.closed.set()
-        # Ack data the panel pushes, unless configure_acks() told it not to expect Acks.
-        self.ack_pushes = True
+        # Off: on site the panel Nacked (0x0120) every Ack we sent for pushed data.
+        self.ack_pushes = False
 
     @property
     def connected(self) -> bool:
@@ -203,16 +203,14 @@ class ProtegeConnection:
         """Ask the panel to Ack our commands but not to expect Acks for pushed data.
 
         Then nothing we send is a reply the panel might answer, so every Ack or Nack we
-        receive belongs to a command. Call with the lock held. If the panel refuses,
-        fall back to acking pushed data as the spec's defaults require.
+        receive belongs to a command. Call with the lock held. Panels set up with "Ack
+        Commands" only (as on site) refuse Acks for pushed data, so pushes are not acked
+        even if this command is refused.
         """
         try:
             await self.command(p.build_ack_config(command_ack=True, monitor_ack=False, event_ack=False))
         except CommandRejected as err:
-            _LOGGER.debug("Panel refused the Ack configuration (%s); acking pushed data", err)
-            self.ack_pushes = True
-        else:
-            self.ack_pushes = False
+            _LOGGER.debug("Panel refused the Ack configuration: %s", err)
 
     async def write(self, raw: bytes) -> None:
         if self._writer is None:

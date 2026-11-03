@@ -111,7 +111,10 @@
               "alarm": "Alarm",
               "door": "Door",
               "trouble": "Trouble",
-              "other": "Other"
+              "other": "Other",
+              "input": "Input",
+              "output": "Output",
+              "user": "User"
             }
           }
         }
