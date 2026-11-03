@@ -1,110 +1,105 @@
+"""The ICT Protege integration."""
+
+from __future__ import annotations
+
 import logging
+
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_HOST, CONF_PORT, Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er, device_registry as dr
-from .const import DOMAIN, CONF_HOST, CONF_PORT, CONF_PASSWORD, CONF_DOORS, CONF_AREAS, CONF_INPUTS, CONF_OUTPUTS
-from .ict_library import ICTClient
+from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
+
+from .const import CONF_PIN, CONF_RECORDS
+from .hub import (
+    ProtegeHub,
+    async_name_records,
+    link_child_devices,
+    records_to_data,
+    remove_stale_devices,
+)
+from .protege import ProtegeClient, ProtegeError
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS = ["lock", "binary_sensor", "switch", "alarm_control_panel", "select"]
 
-async def async_setup(hass: HomeAssistant, config: dict) -> bool: return True
+PLATFORMS: list[Platform] = [
+    Platform.ALARM_CONTROL_PANEL,
+    Platform.BINARY_SENSOR,
+    Platform.BUTTON,
+    Platform.EVENT,
+    Platform.LOCK,
+    Platform.SENSOR,
+    Platform.SWITCH,
+]
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    hass.data.setdefault(DOMAIN, {})
-    
-    client = ICTClient(entry.data[CONF_HOST], entry.data[CONF_PORT], entry.data.get(CONF_PASSWORD))
+type ProtegeConfigEntry = ConfigEntry[ProtegeHub]
 
-    def get_ids(key):
-        d = entry.options.get(key, {})
-        if isinstance(d, dict): return [int(k) for k in d.keys()]
-        return []
 
-    door_ids = get_ids(CONF_DOORS)
-    area_ids = get_ids(CONF_AREAS)
-    input_ids = get_ids(CONF_INPUTS)
-    output_ids = get_ids(CONF_OUTPUTS)
+async def async_setup_entry(hass: HomeAssistant, entry: ProtegeConfigEntry) -> bool:
+    client = ProtegeClient(entry.data[CONF_HOST], entry.data[CONF_PORT], entry.data[CONF_PIN])
+    try:
+        await client.connect()
+    except ProtegeError as err:
+        if not entry.data.get(CONF_RECORDS):
+            raise ConfigEntryNotReady(f"Cannot reach the panel: {err}") from err
+        _LOGGER.warning("Panel unreachable (%s); starting with saved records and retrying", err)
+    else:
+        if entry.unique_id is None and client.panel.serial_str:
+            hass.config_entries.async_update_entry(entry, unique_id=client.panel.serial_str)
+        try:
+            records = await client.discover()
+        except ProtegeError as err:
+            await client.disconnect()
+            raise ConfigEntryNotReady(f"Discovery failed: {err}") from err
+        await async_name_records(hass, entry, records)
+        data = records_to_data(records)
+        if data != entry.data.get(CONF_RECORDS):
+            hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_RECORDS: data})
 
-    client.set_configuration(
-        doors=door_ids,
-        areas=area_ids,
-        inputs=input_ids,
-        outputs=output_ids
-    )
-    
-    await client.start()
-    hass.data[DOMAIN][entry.entry_id] = client
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
-    
-    # --- GARBAGE COLLECTOR (Entities) ---
-    ent_reg = er.async_get(hass)
-    valid_unique_ids = set()
-    
-    # 1. Build list of valid Entity IDs
-    for d in door_ids:
-        valid_unique_ids.add(f"ict_door_{d}")
-        valid_unique_ids.add(f"ict_door_contact_{d}")
-        
-    for a in area_ids:
-        valid_unique_ids.add(f"ict_area_{a}")
-
-    for i in input_ids:
-        valid_unique_ids.add(f"ict_input_{i}")
-        valid_unique_ids.add(f"ict_input_bypass_{i}")
-        valid_unique_ids.add(f"ict_trouble_{i}") 
-
-    for o in output_ids:
-        valid_unique_ids.add(f"ict_output_{o}")
-
-    # Remove Orphaned Entities
-    entries_to_remove = []
-    for entity in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
-        if entity.unique_id not in valid_unique_ids:
-            _LOGGER.warning(f"Removing orphaned entity: {entity.entity_id}")
-            entries_to_remove.append(entity.entity_id)
-            
-    for entity_id in entries_to_remove:
-        ent_reg.async_remove(entity_id)
-
-    # --- GARBAGE COLLECTOR (Devices) ---
-    # This removes the "Shell" if the device is no longer in config
+    hub = ProtegeHub(hass, entry, client)
+    entry.runtime_data = hub
+    await hub.async_start()
+    remove_stale_devices(hass, hub)
     dev_reg = dr.async_get(hass)
-    valid_device_identifiers = set()
+    dev_reg.async_get_or_create(config_entry_id=entry.entry_id, **hub.controller_device)
+    # Expansion modules hold no entities themselves; inputs and outputs link to them.
+    for module in sorted(hub.modules):
+        dev_reg.async_get_or_create(config_entry_id=entry.entry_id, **hub.module_device(module))
 
-    # 2. Build list of valid Device Identifiers
-    for d in door_ids: valid_device_identifiers.add((DOMAIN, f"door_{d}"))
-    for a in area_ids: valid_device_identifiers.add((DOMAIN, f"area_{a}"))
-    for i in input_ids: valid_device_identifiers.add((DOMAIN, f"input_{i}"))
-    for o in output_ids: valid_device_identifiers.add((DOMAIN, f"output_{o}"))
-    # Note: Controller device is always valid
-    valid_device_identifiers.add((DOMAIN, "ict_controller"))
-
-    # Remove Orphaned Devices
-    devices_to_remove = []
-    for device in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
-        # Check if ANY of the device's identifiers are in our valid list
-        is_valid = False
-        for identifier in device.identifiers:
-            if identifier in valid_device_identifiers:
-                is_valid = True
-                break
-        
-        if not is_valid:
-            _LOGGER.warning(f"Removing orphaned device: {device.name}")
-            devices_to_remove.append(device.id)
-
-    for dev_id in devices_to_remove:
-        dev_reg.async_remove_device(dev_id)
-
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    link_child_devices(hass, hub)
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
 
-async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry):
+
+async def _async_update_listener(hass: HomeAssistant, entry: ProtegeConfigEntry) -> None:
     await hass.config_entries.async_reload(entry.entry_id)
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    client = hass.data[DOMAIN][entry.entry_id]
-    await client.stop()
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if unload_ok: hass.data[DOMAIN].pop(entry.entry_id)
-    return unload_ok
+
+async def async_unload_entry(hass: HomeAssistant, entry: ProtegeConfigEntry) -> bool:
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unloaded:
+        await entry.runtime_data.async_stop()
+    return unloaded
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate entries made by the 1.x integration."""
+    if entry.version == 1:
+        # 1.x kept hand-entered records in options and used different unique IDs.
+        # Start clean: keep the connection details, drop the old entities and devices.
+        ent_reg = er.async_get(hass)
+        for entity in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
+            ent_reg.async_remove(entity.entity_id)
+        dev_reg = dr.async_get(hass)
+        for device in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
+            dev_reg.async_remove_device(device.id)
+        data = {
+            CONF_HOST: entry.data[CONF_HOST],
+            CONF_PORT: int(entry.data.get(CONF_PORT, 21000)),
+            CONF_PIN: str(entry.data.get("password", "")),
+        }
+        hass.config_entries.async_update_entry(entry, data=data, options={}, version=2)
+        _LOGGER.info("Migrated ICT Protege entry %s to version 2", entry.title)
+    return True

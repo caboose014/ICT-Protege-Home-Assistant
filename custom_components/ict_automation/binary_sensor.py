@@ -1,79 +1,92 @@
-import logging
-from homeassistant.components.binary_sensor import BinarySensorEntity, BinarySensorDeviceClass
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import callback
-from homeassistant.helpers.entity import DeviceInfo
-from .const import DOMAIN, CONF_INPUTS, CONF_DOORS
+"""Door contacts, inputs, trouble inputs and area alarms."""
 
-async def async_setup_entry(hass, entry, async_add_entities):
-    client = hass.data[DOMAIN][entry.entry_id]
-    
-    # Process Inputs
-    data_in = entry.options.get(CONF_INPUTS, {})
-    entities = []
-    for k, v in data_in.items():
-        # Create standard Input Entity
-        entities.append(ICTInput(client, int(k), v, "input"))
-        # Automatically create Trouble Entity linked to same ID
-        entities.append(ICTInput(client, int(k), v, "trouble"))
-        
-    # Process Doors
-    data_dr = entry.options.get(CONF_DOORS, {})
-    for k, v in data_dr.items():
-        entities.append(ICTInput(client, int(k), v, "door"))
-        
+from __future__ import annotations
+
+from typing import Any
+
+from homeassistant.components.binary_sensor import BinarySensorDeviceClass, BinarySensorEntity
+from homeassistant.const import EntityCategory
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+
+from . import ProtegeConfigEntry
+from .entity import ProtegeEntity
+from .protege import InputState, RecordType
+
+
+async def async_setup_entry(
+    hass: HomeAssistant, entry: ProtegeConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
+) -> None:
+    hub = entry.runtime_data
+    entities: list[BinarySensorEntity] = []
+    for record in hub.records_of(RecordType.DOOR):
+        entities.append(ProtegeDoorContact(hub, record))
+    for record in hub.records_of(RecordType.AREA):
+        entities.append(ProtegeAreaFlag(hub, record, "alarm"))
+        entities.append(ProtegeAreaFlag(hub, record, "siren"))
+    for record in hub.records_of(RecordType.INPUT):
+        entities.append(ProtegeInput(hub, record))
+    for record in hub.records_of(RecordType.TROUBLE_INPUT):
+        entities.append(ProtegeTroubleInput(hub, record))
     async_add_entities(entities)
 
-class ICTInput(BinarySensorEntity):
-    def __init__(self, client, dev_id, name, sensor_type):
-        self._client = client
-        self._dev_id = dev_id
-        self._type = sensor_type
-        
-        if sensor_type == "trouble":
-            self._attr_name = f"{name} Trouble"
-            self._attr_unique_id = f"ict_trouble_{dev_id}"
-            self._attr_device_class = BinarySensorDeviceClass.PROBLEM
-            self._model = "Protege Input"
-            # Identifiers match the Input Device ID
-            self._device_id_prefix = "input" 
-        elif sensor_type == "door":
-            self._attr_name = f"{name} Contact"
-            self._attr_unique_id = f"ict_door_contact_{dev_id}"
-            self._attr_device_class = BinarySensorDeviceClass.DOOR
-            self._model = "Protege Door"
-            self._device_id_prefix = "door"
+
+class ProtegeDoorContact(ProtegeEntity, BinarySensorEntity):
+    _attr_device_class = BinarySensorDeviceClass.DOOR
+    _attr_translation_key = "door_contact"
+
+    def __init__(self, hub, record) -> None:
+        super().__init__(hub, record, "contact", hub.record_device(record))
+
+    @property
+    def is_on(self) -> bool | None:
+        return None if self.status is None else self.status.open
+
+
+class ProtegeAreaFlag(ProtegeEntity, BinarySensorEntity):
+    def __init__(self, hub, record, flag: str) -> None:
+        super().__init__(hub, record, flag, hub.record_device(record))
+        self._flag = flag
+        self._attr_translation_key = flag
+        if flag == "alarm":
+            self._attr_device_class = BinarySensorDeviceClass.SAFETY
         else:
-            self._attr_name = name
-            self._attr_unique_id = f"ict_input_{dev_id}"
-            self._attr_device_class = None
-            self._model = "Protege Input"
-            self._device_id_prefix = "input"
-            
-        self._is_on = False
-        self._attr_extra_state_attributes = {}
+            self._attr_device_class = BinarySensorDeviceClass.SOUND
 
     @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, f"{self._device_id_prefix}_{self._dev_id}")},
-            name=self._attr_name.replace(" Trouble", "").replace(" Contact", ""),
-            manufacturer="Integrated Control Technology",
-            model=self._model,
-            via_device=(DOMAIN, "ict_controller"),
-        )
+    def is_on(self) -> bool | None:
+        return None if self.status is None else getattr(self.status, self._flag)
 
-    async def async_added_to_hass(self):
-        self._client.register_callback(self._handle_update)
 
-    @callback
-    def _handle_update(self, update):
-        if update["type"] == self._type and update["id"] == self._dev_id:
-            if self._type == "door": self._is_on = update["open"]
-            else:
-                self._is_on = update["on"]
-                if "status" in update: self._attr_extra_state_attributes["status_text"] = update["status"]
-            self.async_write_ha_state()
+class ProtegeInput(ProtegeEntity, BinarySensorEntity):
+    """An input (zone). Change its type with "Show as" in the entity settings."""
+
+    def __init__(self, hub, record) -> None:
+        super().__init__(hub, record, "input", hub.record_device(record))
+        self._attr_name = None  # the input's own device carries its name
 
     @property
-    def is_on(self): return self._is_on
+    def is_on(self) -> bool | None:
+        return None if self.status is None else self.status.active
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        status = self.status
+        if status is None:
+            return None
+        state = status.state
+        return {
+            "reference": status.reference,
+            "input_state": state.name.lower() if isinstance(state, InputState) else state,
+            "bypassed": status.bypassed,
+        }
+
+
+class ProtegeTroubleInput(ProtegeInput):
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(self, hub, record) -> None:
+        ProtegeEntity.__init__(self, hub, record, "trouble", hub.controller_device)
+        self._attr_name = record.default_name
