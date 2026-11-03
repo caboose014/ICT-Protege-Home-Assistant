@@ -65,7 +65,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ProtegeConfigEntry) -> b
     dev_reg = dr.async_get(hass)
     dev_reg.async_get_or_create(config_entry_id=entry.entry_id, **hub.controller_device)
     # Expansion modules hold no entities themselves; inputs and outputs link to them.
-    for module in sorted({r.module for r in hub.records if r.module and r.module != CONTROLLER_MODULE}):
+    for module in sorted(hub.modules):
         dev_reg.async_get_or_create(config_entry_id=entry.entry_id, **hub.module_device(module))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
