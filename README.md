@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="custom_components/ict_automation/icon.png" width="150" height="150" alt="ICT Protege">
+  <img src="icon.png" width="150" height="150" alt="ICT Protege">
 </p>
 
 # ICT Protege for Home Assistant
