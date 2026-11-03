@@ -91,6 +91,12 @@
       },
       "ready_to_arm": {
         "name": "Ready to arm"
+      },
+      "tamper": {
+        "name": "Tamper"
+      },
+      "fault": {
+        "name": "Fault"
       }
     },
     "button": {

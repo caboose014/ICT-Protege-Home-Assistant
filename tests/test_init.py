@@ -380,3 +380,18 @@ def test_emergency_kinds() -> None:
     assert emergency_kind("Keypad 1 Medical Alarm") == "medical"
     assert emergency_kind("Input Garage Opened") is None
     assert emergency_kind(None) is None
+
+
+async def test_tamper_and_fault(hass: HomeAssistant, entry, panel: FakePanel) -> None:
+    tamper, fault = "binary_sensor.input_zx001_01_tamper", "binary_sensor.protege_wx_fault"
+    assert hass.states.get(tamper).state == "off"
+    assert hass.states.get(fault).state == "off"
+    panel.set_input(3, 3)  # tamper
+    await _settle(hass, lambda: hass.states.get(tamper).state == "on")
+    assert hass.states.get(fault).state == "on"
+    assert hass.states.get(fault).attributes["active"] == ["Input ZX001:01 tamper"]
+    panel.set_input(3, 0)
+    panel.troubles[1][1] = 1
+    panel.push(p.GROUP_TROUBLE_INPUT, 1)
+    await _settle(hass, lambda: hass.states.get(tamper).state == "off")
+    await _settle(hass, lambda: hass.states.get(fault).attributes["active"] == ["Trouble input CP001:01"])

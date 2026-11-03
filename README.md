@@ -16,10 +16,10 @@ Enter the panel address and a PIN, and every door, area, input, output and troub
 
 | Panel record | Home Assistant |
 | --- | --- |
-| Panel | A controller device with firmware and serial, a **Rescan panel** button, and (optional) a **Panel event** entity |
+| Panel | A controller device with firmware and serial, a **Fault** sensor (on when any trouble input is active or any input is tampered, listing which), a **Rescan panel** button, and (optional) a **Panel event** entity |
 | Door | A device with a **lock** (lock, unlock latched, *open* = momentary unlock), a **contact** sensor and a **door state** sensor (closed, open, left open, forced open) |
 | Area | A device with an **alarm panel** (away = normal arm, home = stay, night = instant), **alarm** and **siren** sensors, **Allow arm away / home / night** switches to hide arm modes that area doesn't use, and an **Alarm cause** sensor (the zone that set the alarm off, kept until disarm). With a WX operator set, also **Open zones** and **Ready to arm** |
-| Input | A device with a state sensor and a **Bypass** switch. Use *Show as* in the entity settings to make it a door, window, motion or smoke sensor |
+| Input | A device with a state sensor, a **Tamper** sensor (tamper or short on its wiring) and a **Bypass** switch. Use *Show as* in the entity settings to make it a door, window, motion or smoke sensor |
 | Output | A device with a switch |
 | Trouble input | A diagnostic problem sensor on the controller, disabled by default |
 
