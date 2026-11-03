@@ -47,16 +47,22 @@ Everything here is done in the Protege WX web interface.
    Changing these fields needs a power cycle of the controller. Firmware 4.00.1676 or later is required.
 
    <img src="docs/images/ict-https.png" width="700" alt="System Settings, General tab: Use HTTPS ticked, HTTPS port 443">
-2. Create a role for Home Assistant, then an operator with that role. Use it only for Home Assistant, not for people.
+2. Under **Users > Operators**, create an operator for Home Assistant with the **User** role. Use it only for Home Assistant, not for people.
    Leaving *Operator Timeout* on is fine: if the panel ends the session, the integration logs in again on its own.
 
    <img src="docs/images/ict-operator.png" width="700" alt="Operator: name, username, password, role and operator timeout">
-3. Give the role only what Home Assistant needs:
+3. Check the **User** role (on the **Roles** page) has what Home Assistant needs. If your panel only has the built-in
+   User, Master and Installer roles, remember that changes to User apply to every operator with that role.
 
 | Your panel | Rights the role needs |
 | --- | --- |
 | Has the control service | **View** programming only. The operator only reads names and zone settings, once at start-up and on Rescan, then logs out. |
 | Web interface only | View status and the event log, plus **control** of the areas, doors, outputs and inputs (bypass) you want to use from Home Assistant. No programming or user management rights. |
+
+   For web-only mode, tick these under **Monitoring**: **Events**, **Doors**, **Inputs**, **Areas**, **Outputs** and
+   **Trouble Inputs**. Leave the Wizards, Users and Reporting boxes unticked.
+
+   <img src="docs/images/ict-role.png" width="700" alt="Roles, User role: Monitoring rights for events, doors, inputs and areas">
 
 ### 2. Control service (licensed panels only)
 
