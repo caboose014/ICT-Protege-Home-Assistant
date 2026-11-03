@@ -19,7 +19,8 @@ Doors, alarm areas, inputs (PIRs, reeds), outputs and trouble inputs are found a
 Setup works out the rest. It checks whether the panel has the control service and uses it if so, otherwise it runs
 through the web interface.
 
-Needs Home Assistant 2025.1 or later and Protege WX firmware 4.00.1676 or later.
+**You'll need**: Home Assistant 2025.1 or later, Protege WX firmware 4.00.1676 or later, and access to the panel's
+programming (if you don't have it, your security installer can do the panel steps for you).
 
 ## Which way will it connect?
 
@@ -120,6 +121,9 @@ repository (category *Integration*). Download **ICT Protege**, then restart Home
    * **Disable** any alarm area you don't use, for example a system area that only exists for monitoring.
    * On each area's device, turn off the **Allow arm …** switches for modes that area doesn't use.
    * Use *Show as* on inputs (motion, door, window, smoke) so they get the right icon.
+
+**Check it worked**: your doors show as locked or unlocked, areas as armed or disarmed, and opening a door or walking past a
+PIR changes its sensor within a couple of seconds.
 
 **Configure** (the cog on the integration) has:
 
@@ -233,6 +237,14 @@ Everything stays on your network. The controller uses a self-signed HTTPS certif
 keep the controller on a network you trust. Like every Home Assistant integration, the logins are stored in Home Assistant's
 config files, so anything that can read those (or an unencrypted backup) could use them. That's why the operator and user
 should only have the rights Home Assistant needs.
+</details>
+
+<details>
+<summary>Upgrading from 2.x</summary>
+
+Just update and restart: existing installs keep running on the control service with the same devices and entities.
+To move between web-only and the control service, use **Configure > Switch to the Automation and Control service** rather
+than deleting and re-adding the integration, because the two number some records differently and the switch maps them for you.
 </details>
 
 <details>
