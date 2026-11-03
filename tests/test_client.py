@@ -259,3 +259,19 @@ async def test_event_block_accepted_in_either_byte_order(panel):
     await _wait_until(lambda: events)
     assert events[0].text.startswith("Thu 10:48:54")
     await client.stop()
+
+
+async def test_output_push_triggers_door_readback(panel, monkeypatch):
+    """On site a Savant unlock pushed only the lock output, not the door."""
+    from custom_components.ict_automation.protege import client as client_mod
+
+    monkeypatch.setattr(client_mod, "DOOR_WATCH_DELAYS", (0.05, 0.2))
+    client = ProtegeClient("127.0.0.1", panel.port, "1234")
+    await client.connect()
+    records = await client.discover()
+    await client.start(records)
+    panel.doors[2] = [0x01, 0x01]  # unlocked by another system, no door push
+    panel.outputs[1][1] = 1
+    panel.push(p.GROUP_OUTPUT, 1)
+    await _wait_until(lambda: not client.status[(RecordType.DOOR, 2)].locked)
+    await client.stop()
