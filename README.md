@@ -131,6 +131,11 @@ restart of Home Assistant carries on with the same session instead of logging in
 but never more than 6 times an hour, backing off up to 10 minutes between tries. If the panel rejects the password it stops trying
 and asks you to re-enter it from **Settings > Devices & services**, so it can't lock the operator out. It logs out when the integration is unloaded.
 
+**Security notes**: controllers use a self-signed HTTPS certificate, so the integration doesn't verify it; keep the controller
+on a network you trust. Like every Home Assistant integration, the operator login is stored in Home Assistant's config files,
+so anything that can read those (or an unencrypted backup) can log in as the operator. That is why its role should only have
+the rights Home Assistant needs.
+
 **Arm codes**: the web interface has no way to check a keypad code, so pick one when you add the integration (change it later under **Configure**):
 
 * **Codes checked in Home Assistant**: add a name and code for each person. Codes are stored only as salted hashes, and the person's

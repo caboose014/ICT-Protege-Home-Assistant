@@ -466,3 +466,13 @@ async def test_record_ids_never_take_over_display_order_entities(hass: HomeAssis
     assert hass.states.get(jail_gate).name == "Jail Gate"
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
+
+
+async def test_removing_the_entry_deletes_its_session(hass: HomeAssistant, controller, hass_storage) -> None:
+    entry = _entry(controller, {CONF_CODE_MODE: CODE_MODE_NONE})
+    await _setup(hass, entry)
+    key = f"{DOMAIN}.{entry.entry_id}.session"
+    await _settle(hass, lambda: key in hass_storage)
+    await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+    assert key not in hass_storage

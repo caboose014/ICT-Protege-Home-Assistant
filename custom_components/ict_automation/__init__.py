@@ -14,7 +14,6 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
-from homeassistant.helpers.storage import Store
 
 from .const import CONF_CONNECTION, CONF_NUMBERING, CONF_PIN, CONF_RECORDS, CONNECTION_WEB, DOMAIN
 from .hub import (
@@ -26,7 +25,7 @@ from .hub import (
 )
 from .protege import ProtegeClient, ProtegeError
 from .protege.web import ProtegeWebClient, WebAuthError
-from .upgrade import CHECK_INTERVAL, async_check_control_service
+from .upgrade import CHECK_INTERVAL, async_check_control_service, session_store
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,7 +56,7 @@ async def _async_setup_web_client(hass: HomeAssistant, entry: ProtegeConfigEntry
         int(entry.data[CONF_PORT]),
     )
     # Keep the session cookie across restarts, so a crash doesn't strand a session on the controller.
-    store: Store[dict[str, str]] = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.session")
+    store = session_store(hass, entry)
     saved = await store.async_load() or {}
     client.resume(saved.get("cookie"))
 
@@ -143,6 +142,11 @@ async def _async_finish_setup(
 
 async def _async_update_listener(hass: HomeAssistant, entry: ProtegeConfigEntry) -> None:
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Deleting the integration also deletes its saved web session."""
+    await session_store(hass, entry).async_remove()
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ProtegeConfigEntry) -> bool:
