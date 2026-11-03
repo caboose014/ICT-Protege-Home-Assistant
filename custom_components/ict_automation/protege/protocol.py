@@ -221,6 +221,14 @@ def build_set_login_time(seconds: int) -> bytes:
     return build_command_packet(GROUP_SYSTEM, SYS_SET_LOGIN_TIME, struct.pack("<H", min(seconds, 6000)))
 
 
+def build_ack_config(
+    *, command_ack: bool = True, monitor_ack: bool = False, event_ack: bool = False
+) -> bytes:
+    """Build an Ack Configuration packet (0x01 = Ack commands / resend up to 5 times)."""
+    data = bytes((int(command_ack), int(monitor_ack), int(event_ack), 0, 0, 0, 0, 0))
+    return build_command_packet(GROUP_SYSTEM, SYS_ACK_CONFIG, data)
+
+
 def build_ack() -> bytes:
     """Build the Ack a client sends for unsolicited data packets."""
     return build_packet(PKT_TYPE_SYSTEM, SYSTEM_ACK)

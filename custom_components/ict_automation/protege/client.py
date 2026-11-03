@@ -111,6 +111,8 @@ class ProtegeConnection:
         self.lock = asyncio.Lock()
         self.closed = asyncio.Event()
         self.closed.set()
+        # Ack data the panel pushes, unless configure_acks() told it not to expect Acks.
+        self.ack_pushes = True
 
     @property
     def connected(self) -> bool:
@@ -180,7 +182,7 @@ class ProtegeConnection:
                 self._waiters.remove(waiter)
                 consumed = True
                 break
-        if packet.packet_type == p.PKT_TYPE_DATA and not consumed:
+        if packet.packet_type == p.PKT_TYPE_DATA and not consumed and self.ack_pushes:
             # Pushed data (monitoring changes, events) must be acked, or the panel keeps
             # resending it and can hold back later changes. Replies to requests are not acked.
             asyncio.get_running_loop().create_task(self._send_ack())
@@ -196,6 +198,21 @@ class ProtegeConnection:
     async def _send_ack(self) -> None:
         with contextlib.suppress(ProtegeError):
             await self.write(p.build_ack())
+
+    async def configure_acks(self) -> None:
+        """Ask the panel to Ack our commands but not to expect Acks for pushed data.
+
+        Then nothing we send is a reply the panel might answer, so every Ack or Nack we
+        receive belongs to a command. Call with the lock held. If the panel refuses,
+        fall back to acking pushed data as the spec's defaults require.
+        """
+        try:
+            await self.command(p.build_ack_config(command_ack=True, monitor_ack=False, event_ack=False))
+        except CommandRejected as err:
+            _LOGGER.debug("Panel refused the Ack configuration (%s); acking pushed data", err)
+            self.ack_pushes = True
+        else:
+            self.ack_pushes = False
 
     async def write(self, raw: bytes) -> None:
         if self._writer is None:
@@ -418,6 +435,7 @@ class ProtegeClient:
         try:
             async with self._conn.lock:
                 await self._conn.command(p.build_command_packet(p.GROUP_SYSTEM, p.SYS_ARE_YOU_THERE))
+                await self._conn.configure_acks()
                 self.panel = await self._read_panel_info()
         except ProtegeError:
             await self._conn.close()
@@ -503,6 +521,7 @@ class ProtegeClient:
                     await self._conn.open()
                     async with self._conn.lock:
                         await self._conn.command(p.build_command_packet(p.GROUP_SYSTEM, p.SYS_ARE_YOU_THERE))
+                        await self._conn.configure_acks()
                     await self._restore_monitoring()
                     _LOGGER.info("Connected to ICT panel at %s:%s", self.host, self.port)
                     self._set_available(True)
@@ -853,6 +872,7 @@ class ProtegeEventClient:
         await self._conn.open()
         try:
             async with self._conn.lock:
+                await self._conn.configure_acks()
                 await self._conn.command(p.build_login(self.pin))
                 # Some firmware rejects these; the service may already be set to send events.
                 for raw, what in (

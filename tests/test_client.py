@@ -220,8 +220,9 @@ async def test_badge_unlock_shows_even_when_panel_only_pushes_the_door_opening(p
     await client.stop()
 
 
-async def test_pushed_status_is_acked(panel):
+async def test_pushed_status_is_acked_when_panel_refuses_ack_config(panel):
     """The panel resends unacked pushes and can hold back later ones."""
+    panel.accept_ack_config = False
     client = ProtegeClient("127.0.0.1", panel.port, "1234")
     await client.connect()
     records = await client.discover()
@@ -232,7 +233,22 @@ async def test_pushed_status_is_acked(panel):
     await client.stop()
 
 
+async def test_ack_config_turns_off_push_acks(panel):
+    client = ProtegeClient("127.0.0.1", panel.port, "1234")
+    await client.connect()
+    records = await client.discover()
+    await client.start(records)
+    assert panel.sessions[0].expects_acks is False
+    before = panel.acks_received
+    panel.set_input(3, 1)
+    await _wait_until(lambda: client.status[(RecordType.INPUT, 3)].active)
+    await asyncio.sleep(0.1)
+    assert panel.acks_received == before
+    await client.stop()
+
+
 async def test_event_block_accepted_in_either_byte_order(panel):
+    panel.accept_ack_config = False
     events = []
     client = ProtegeEventClient("127.0.0.1", panel.port, "4321")
     client.add_listener(events.append)
