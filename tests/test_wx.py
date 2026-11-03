@@ -21,13 +21,14 @@ from custom_components.ict_automation.protege.wx import (
 RAND = 0x1234ABCD
 # Input 1 is in Soundline (WX area 16) as type 5; input 14's details are hidden from the operator.
 DETAILS = {
-    (
-        "GXT_INPUTS_TBL",
-        0,
-    ): "Name=Front Door Reed&Area1=0&ZoneType1=4&Area2=16&ZoneType2=5&Area3=-1&ZoneType3=-1",
-    ("GXT_INPUTS_TBL", 1): "Name=Front Door PTE&Area1=16&ZoneType1=5&Area2=4294967295",
-    ("GXT_INPUTTYPES_TBL", 4): "Name=Instant&AllowOpen=false",
-    ("GXT_INPUTTYPES_TBL", 5): "Name=Entry Delay&AllowOpen=true",
+    # Field names and the 2147483647 "not set" value as read from a WX on site.
+    ("GXT_INPUTS_TBL", 0): "InputId=0&Name=Front Door Reed&Area1=0&Area2=16&Area3=2147483647"
+    "&ZoneType1=4&ZoneType2=5&ZoneType3=2147483647",
+    ("GXT_INPUTS_TBL", 1): "InputId=1&Name=Front Door PTE&Area1=16&ZoneType1=5&Area2=2147483647",
+    ("GXT_INPUTTYPES_TBL", 4): "InputTypeId=4&Name=Delay&GenerateAlarms=true&ForceZone=false"
+    "&ExitAlleyZoneDoNotTestIt=false&TwentyFourHourPanicZone=false",
+    ("GXT_INPUTTYPES_TBL", 5): "InputTypeId=5&Name=Delay No Test&GenerateAlarms=true&ForceZone=false"
+    "&ExitAlleyZoneDoNotTestIt=true&TwentyFourHourPanicZone=false",
 }
 LISTS = {
     "GXT_DOORS_TBL": "0=Front Door&1=Jail Gate",
@@ -129,10 +130,9 @@ async def test_fetch_site_reads_input_details_once_and_logs_out(wx_server):
     )
 
 
-def test_zone_settings_map_wx_ids_to_panel_records(monkeypatch):
+def test_zone_settings_map_wx_ids_to_panel_records():
     from custom_components.ict_automation.protege import wx
 
-    monkeypatch.setattr(wx, "_ARM_OPEN_FIELDS", ("AllowOpen",))
     records = [Record(RecordType.AREA, 1), Record(RecordType.AREA, 2)]
     records += [Record(RecordType.INPUT, i) for i in (1, 2, 3)]
     site = WXSite(
@@ -166,3 +166,26 @@ def test_zone_settings_need_matching_counts():
     )
     assert apply_zone_settings(records, site) == 0
     assert records[1].areas is None
+
+
+@pytest.mark.parametrize(
+    ("fields", "allowed"),
+    [
+        (
+            {"GenerateAlarms": "true", "ForceZone": "false", "ExitAlleyZoneDoNotTestIt": "false"},
+            False,
+        ),  # Instant
+        (
+            {"GenerateAlarms": "true", "ForceZone": "true", "ExitAlleyZoneDoNotTestIt": "false"},
+            False,
+        ),  # Force
+        ({"GenerateAlarms": "true", "ExitAlleyZoneDoNotTestIt": "true"}, True),  # Delay No Test
+        ({"GenerateAlarms": "true", "TwentyFourHourPanicZone": "true"}, True),  # Fire
+        ({"GenerateAlarms": "false", "TwentyFourHourPanicZone": "false"}, True),  # Trouble Bell
+        ({}, False),  # unknown: must be closed
+    ],
+)
+def test_which_input_types_may_be_open_when_arming(fields, allowed):
+    from custom_components.ict_automation.protege.wx import allowed_open_when_arming
+
+    assert allowed_open_when_arming(fields) is allowed

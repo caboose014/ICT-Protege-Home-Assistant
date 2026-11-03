@@ -2,7 +2,7 @@
 
 The ACS protocol carries no names, so they come from the controller's HTTP API
 (``PRT_CTRL_DIN_ISAPI.dll``, see ICT's "Protege WX DLL API Reference"). Only the
-HTTPS login for firmware 4.00.1676 or later is supported, and only List requests
+HTTPS login for firmware 4.00.1676 or later is supported, and only List and Detail requests
 are sent: this client never changes programming.
 
 Login (per the reference and github.com/Hohaia/WXClient):
@@ -30,7 +30,7 @@ TIMEOUT = aiohttp.ClientTimeout(total=15)
 TABLE_INPUT_TYPES = "GXT_INPUTTYPES_TBL"
 # Each input can sit in up to four areas, each with its own input type.
 INPUT_AREA_SLOTS = ("1", "2", "3", "4")
-NO_RECORD = (-1, 0xFFFFFFFF)
+NO_RECORD = (-1, 0x7FFFFFFF, 0xFFFFFFFF)  # "not set" (0x7FFFFFFF on site)
 
 TABLES = {
     RecordType.DOOR: "GXT_DOORS_TBL",
@@ -109,14 +109,21 @@ def _record_id(value: str | None) -> int | None:
     return None if number in NO_RECORD or number < 0 else number
 
 
-# Input type options that let an input stay open while its area arms.
-# TODO(site): confirm the field name against a real GXT_INPUTTYPES_TBL detail reply.
-_ARM_OPEN_FIELDS: tuple[str, ...] = ()
+def _flag(fields: dict[str, str], name: str) -> bool:
+    return fields.get(name, "").strip().lower() == "true"
 
 
 def allowed_open_when_arming(input_type: dict[str, str]) -> bool:
-    """True when this input type does not need to be closed for its area to arm."""
-    return any(input_type.get(name, "").lower() in ("true", "1", "yes") for name in _ARM_OPEN_FIELDS)
+    """True when this input type does not need to be closed for its area to arm.
+
+    Read on site (WX 4.00): "Exit Alley Zone - Do Not Test It" (types such as Delay No Test)
+    is not tested at arming. 24 hour types (Fire, 24 Hour Alarm) and types that raise no
+    alarm (Trouble) aren't part of arming either. "Force Zone" only matters for force arming,
+    so it doesn't count here.
+    """
+    if _flag(input_type, "ExitAlleyZoneDoNotTestIt") or _flag(input_type, "TwentyFourHourPanicZone"):
+        return True
+    return input_type.get("GenerateAlarms", "").strip().lower() == "false"
 
 
 @dataclass
