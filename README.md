@@ -36,6 +36,8 @@ If you get the licence later, the integration offers to switch over and keeps al
 
 > [!NOTE]
 > [ha-protege-wx](https://github.com/olliemaller/ha-protege-wx) is another integration that works through the WX web interface.
+> It talks to the web interface over plain HTTP (usually port 7377) using the same encrypted protocol as the web pages, so it
+> may suit panels that can't run HTTPS or are on firmware older than 4.00.1676. This integration needs HTTPS and that firmware.
 
 ## Setup on the panel
 
@@ -292,6 +294,7 @@ no Home Assistant imports.
 ## Credits and related projects
 
 - [ha-protege-wx](https://github.com/olliemaller/ha-protege-wx) by olliemaller is another Protege WX integration, built entirely
-  on the WX web interface, so it doesn't need the Automation and Control licence. It was the push behind this integration's
+  on the WX web interface, so it doesn't need the Automation and Control licence. It connects over plain HTTP with the web
+  interface's own encryption, while this integration uses HTTPS and needs firmware 4.00.1676 or later. It was the push behind this integration's
   web-only mode. It also offers a notifications blueprint (entry and alarm alerts, failed arms, unlocked doors), a keypad-style
   alarm card and Assist voice queries, which are worth a look whichever integration you use. The two projects share no code.
