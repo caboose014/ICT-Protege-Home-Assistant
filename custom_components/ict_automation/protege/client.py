@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import logging
 import struct
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 
 from . import protocol as p
@@ -325,6 +325,11 @@ def _panel_info_matcher(packet: p.ICTPacket) -> bool:
     return any(block.type_high == 0x00 for block in p.iter_data_blocks(packet.data))
 
 
+# How the control service numbers records: by record ID (the GX/WX default, the same IDs the
+# web interface uses) or 1, 2, 3 in display order (after the ACPUseDisplayOrder command).
+NUMBERING_RECORD_ID = "record_id"
+NUMBERING_DISPLAY_ORDER = "display_order"
+
 StatusListener = Callable[[StatusUpdate], None]
 ConnectionListener = Callable[[bool], None]
 
@@ -361,6 +366,7 @@ class ProtegeClient:
         self._status_listeners: list[StatusListener] = []
         self._connection_listeners: list[ConnectionListener] = []
         self._monitored: list[Record] = []
+        self.numbering = NUMBERING_DISPLAY_ORDER
         self._polled: list[Record] = []
         self._tasks: list[asyncio.Task] = []
         self._background: set[asyncio.Task] = set()
@@ -634,42 +640,59 @@ class ProtegeClient:
         self,
         limits: dict[RecordType, int] | None = None,
         *,
+        listed: dict[RecordType, list[int]] | None = None,
         gap_tolerance: int = 3,
         probe_timeout: float = 1.5,
     ) -> list[Record]:
-        """Find every record on the panel by probing status until indexes run out."""
+        """Find every record on the panel.
+
+        With `listed` (record IDs per type from the web interface), the panel is first asked
+        whether it numbers records by record ID (the default on GX/WX) or by display order
+        (the ACPUseDisplayOrder command). By record ID, exactly the listed records are read;
+        otherwise status is probed from 1 until indexes run out.
+        """
         limits = limits or DEFAULT_DISCOVERY_LIMITS
         found: list[Record] = []
-        async with self._conn.lock:
-            logged_in = False
+        self.numbering = NUMBERING_DISPLAY_ORDER
+        logged_in = False
+
+        async def probe(record_type: RecordType, index: int) -> Status | None:
+            nonlocal logged_in
             try:
-                for record_type in MONITOR_PRIORITY:
-                    misses = 0
-                    for index in range(1, limits.get(record_type, 0) + 1):
-                        try:
-                            status = await self._request_status_locked(
-                                record_type, index, timeout=probe_timeout
-                            )
-                        except CommandRejected as err:
-                            if err.code != p.NACK_USER_LOGOUT or logged_in:
-                                raise
-                            # Status requests need a login on this service; use the PIN.
-                            await self._login(self.pin)
-                            logged_in = True
-                            status = await self._request_status_locked(
-                                record_type, index, timeout=probe_timeout
-                            )
-                        except ProtegeTimeout:
-                            status = None
-                        if status is None:
-                            misses += 1
-                            if misses >= gap_tolerance:
-                                break
-                            continue
+                return await self._request_status_locked(record_type, index, timeout=probe_timeout)
+            except CommandRejected as err:
+                if err.code != p.NACK_USER_LOGOUT or logged_in:
+                    raise
+                # Status requests need a login on this service; use the PIN.
+                await self._login(self.pin)
+                logged_in = True
+                return await self._request_status_locked(record_type, index, timeout=probe_timeout)
+            except ProtegeTimeout:
+                return None
+
+        def add(record_type: RecordType, index: int, status: Status) -> None:
+            found.append(Record(record_type, index, reference=getattr(status, "reference", None) or None))
+
+        async with self._conn.lock:
+            try:
+                if listed and await self._numbered_by_record_id(listed, probe):
+                    self.numbering = NUMBERING_RECORD_ID
+                    for record_type in MONITOR_PRIORITY:
+                        for index in listed.get(record_type, []):
+                            if (status := await probe(record_type, index)) is not None:
+                                add(record_type, index, status)
+                else:
+                    for record_type in MONITOR_PRIORITY:
                         misses = 0
-                        found.append(
-                            Record(record_type, index, reference=getattr(status, "reference", None) or None)
-                        )
+                        for index in range(1, limits.get(record_type, 0) + 1):
+                            status = await probe(record_type, index)
+                            if status is None:
+                                misses += 1
+                                if misses >= gap_tolerance:
+                                    break
+                                continue
+                            misses = 0
+                            add(record_type, index, status)
             finally:
                 if logged_in:
                     with contextlib.suppress(ProtegeError):
@@ -678,6 +701,21 @@ class ProtegeClient:
             # Logging in and out cleared monitoring on the panel.
             await self._restore_monitoring()
         return found
+
+    @staticmethod
+    async def _numbered_by_record_id(
+        listed: dict[RecordType, list[int]],
+        probe: Callable[[RecordType, int], Awaitable[Status | None]],
+    ) -> bool:
+        """One probe tells: a listed ID above the record count exists only when numbered by record ID.
+
+        When every type's IDs are simply 1..n the two numberings agree, so display order is used.
+        """
+        for record_type in MONITOR_PRIORITY:
+            ids = listed.get(record_type) or []
+            if ids and sorted(ids) != list(range(1, len(ids) + 1)):
+                return await probe(record_type, max(ids)) is not None
+        return False
 
     # ----- commands -------------------------------------------------------
 

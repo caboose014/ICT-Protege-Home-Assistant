@@ -49,7 +49,7 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ProtegeConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
     hub = entry.runtime_data
-    if hub.events is not None:
+    if hub.has_events:
         async_add_entities([ProtegePanelEvent(hub)])
 
 

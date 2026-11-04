@@ -5,7 +5,7 @@ force_arm:
       domain: alarm_control_panel
   fields:
     code:
-      required: true
+      required: false
       selector:
         text:
           type: password

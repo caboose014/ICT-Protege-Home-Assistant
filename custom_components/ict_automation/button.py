@@ -9,10 +9,11 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import ProtegeConfigEntry
-from .const import CONF_RECORDS, DOMAIN
+from .const import CONF_NUMBERING, CONF_RECORDS, DOMAIN
 from .entity import ProtegeEntity
-from .hub import ProtegeHub, async_name_records, records_to_data
+from .hub import ProtegeHub, async_discover_records, records_to_data
 from .protege import ProtegeError, RecordType
+from .upgrade import async_check_control_service
 
 
 async def async_setup_entry(
@@ -42,19 +43,26 @@ class ProtegeRescanButton(ButtonEntity):
 
     async def async_press(self) -> None:
         try:
-            records = await self.hub.client.discover()
+            if self.hub.web:
+                records = await self.hub.client.discover()
+            else:
+                records = await async_discover_records(self.hass, self.hub.entry, self.hub.client)
         except ProtegeError as err:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="command_failed",
                 translation_placeholders={"error": str(err)},
             ) from err
-        await async_name_records(self.hass, self.hub.entry, records)
-        data = records_to_data(records)
+        if self.hub.web:
+            # See if the control service is there now.
+            await async_check_control_service(self.hass, self.hub.entry)
         entry = self.hub.entry
-        if data != entry.data.get(CONF_RECORDS):
+        data = {**entry.data, CONF_RECORDS: records_to_data(records)}
+        if not self.hub.web:
+            data[CONF_NUMBERING] = self.hub.client.numbering
+        if data != entry.data:
             # The update listener reloads the entry with the new records.
-            self.hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_RECORDS: data})
+            self.hass.config_entries.async_update_entry(entry, data=data)
 
 
 class ProtegeDoorMomentaryButton(ProtegeEntity, ButtonEntity):
