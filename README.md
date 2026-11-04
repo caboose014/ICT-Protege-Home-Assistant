@@ -288,3 +288,10 @@ pytest
 Tests run against a simulated panel (`tests/fake_panel.py`, built from ICT's *Automation and Control Service* protocol document)
 and a simulated web interface (`tests/fake_web.py`). The protocol clients in `custom_components/ict_automation/protege/` have
 no Home Assistant imports.
+
+## Credits and related projects
+
+- [ha-protege-wx](https://github.com/olliemaller/ha-protege-wx) by olliemaller is another Protege WX integration, built entirely
+  on the WX web interface, so it doesn't need the Automation and Control licence. It was the push behind this integration's
+  web-only mode. It also offers a notifications blueprint (entry and alarm alerts, failed arms, unlocked doors), a keypad-style
+  alarm card and Assist voice queries, which are worth a look whichever integration you use. The two projects share no code.
