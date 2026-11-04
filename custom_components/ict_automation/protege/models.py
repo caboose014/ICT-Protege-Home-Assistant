@@ -169,6 +169,11 @@ class InputStatus:
         return self.state != InputState.CLOSED
 
     @property
+    def tampered(self) -> bool:
+        """A tamper or short on the input's wiring."""
+        return self.state in (InputState.SHORT, InputState.TAMPER)
+
+    @property
     def bypassed(self) -> bool:
         return bool(self.bypass_flags & 0x01)
 
@@ -199,6 +204,10 @@ class Record:
     index: int
     reference: str | None = None
     name: str | None = None
+    # Inputs only, from the WX web interface (None when unknown): the areas (ACS indexes)
+    # the input belongs to, and those where it may be left open when arming.
+    areas: list[int] | None = None
+    arm_open: list[int] | None = None
 
     @property
     def key(self) -> tuple[RecordType, int]:

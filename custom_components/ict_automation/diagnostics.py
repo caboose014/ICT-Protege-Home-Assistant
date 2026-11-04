@@ -6,13 +6,22 @@ from dataclasses import asdict
 from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
-from homeassistant.const import CONF_HOST
+from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 
 from . import ProtegeConfigEntry
 from .const import CONF_EVENTS_PIN, CONF_PIN, CONF_WX_PASSWORD, CONF_WX_USERNAME
 
-TO_REDACT = {CONF_PIN, CONF_EVENTS_PIN, CONF_HOST, CONF_WX_USERNAME, CONF_WX_PASSWORD}
+TO_REDACT = {
+    CONF_PASSWORD,
+    CONF_USERNAME,
+    "codes",
+    CONF_PIN,
+    CONF_EVENTS_PIN,
+    CONF_HOST,
+    CONF_WX_USERNAME,
+    CONF_WX_PASSWORD,
+}
 
 
 async def async_get_config_entry_diagnostics(
@@ -26,7 +35,8 @@ async def async_get_config_entry_diagnostics(
         },
         "panel": asdict(hub.panel),
         "available": hub.available,
-        "events_connected": bool(hub.events and hub.events.connected),
+        "connection": "web" if hub.web else "acs",
+        "events_connected": hub.web or bool(hub.events and hub.events.connected),
         "status": {
             f"{rtype.value}_{index}": repr(status) for (rtype, index), status in hub.client.status.items()
         },
