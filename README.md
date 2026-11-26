@@ -4,7 +4,8 @@
 
 # ICT Protege for Home Assistant
 
-Control and monitor an **ICT Protege WX** security panel from Home Assistant, on your own network.
+Control and monitor an **ICT Protege WX** security panel from Home Assistant, on your own network. A **Protege GX** with the
+*Automation and Control* licence works too, through the control service alone ([see below](#protege-gx)).
 Doors, alarm areas, inputs (PIRs, reeds), outputs and trouble inputs are found and named automatically.
 
 ## Quick start
@@ -19,7 +20,7 @@ Doors, alarm areas, inputs (PIRs, reeds), outputs and trouble inputs are found a
 Setup works out the rest. It checks whether the panel has the control service and uses it if so, otherwise it runs
 through the web interface.
 
-**You'll need**: Home Assistant 2025.1 or later, Protege WX firmware 4.00.1676 or later, and access to the panel's
+**You'll need**: Home Assistant 2025.2 or later, Protege WX firmware 4.00.1676 or later, and access to the panel's
 programming (if you don't have it, your security installer can do the panel steps for you).
 
 ## Which way will it connect?
@@ -132,7 +133,7 @@ repository (category *Integration*). Download **ICT Protege**, then restart Home
 1. Go to **Settings > Devices & services > Add integration > ICT Protege**.
 2. Enter:
    * the controller's IP address
-   * the operator name and password
+   * the operator name and password (optional when the panel has the control service, and left empty on a Protege GX)
    * the HTTPS port (usually `443`)
    * the control service port (usually `21000`; leave it as it is if you don't have the licence)
 3. What happens next depends on your panel:
@@ -151,8 +152,26 @@ PIR changes its sensor within a couple of seconds.
 
 **Configure** (the cog on the integration) has:
 
-* **Control service**: the WX operator, and event logging (the events port and the events user's PIN).
+* **Control service**: the WX operator, event logging (the events port and the events user's PIN), and **Record IDs and
+  discovery** (see [Records the scan doesn't find](#records-the-scan-doesnt-find)).
 * **Web interface only**: arming codes, and *Switch to the Automation and Control service*.
+
+### Protege GX
+
+A GX has no WX web interface, so use the control service on its own: leave the operator name and password empty at setup.
+Names then come from the panel's module references (*Door 0*, *Input CP001:02*); rename them in Home Assistant.
+Without the web interface's lists, the integration finds records by asking the panel for each record ID in turn, from 0 up.
+
+### Records the scan doesn't find
+
+When records are found by scanning (no web operator), each type stops after 32 empty record IDs in a row. A record past a
+longer run of empty IDs is missed. Under **Configure > Record IDs and discovery** you can:
+
+* **Pin record IDs** per type, for example `0, 12-20, 19=Garage light` (an ID, a range, or an ID with a name). Pinned
+  records are always read and are never removed by a scan.
+* Change **Empty IDs before a scan stops**. `0` scans every ID, which can take a few minutes.
+
+A saved record the panel doesn't answer for (it times out rather than saying the ID is empty) is kept, not removed.
 
 ## What you get
 
@@ -202,6 +221,9 @@ Card numbers are removed from event text so they don't end up in Home Assistant'
 **Control service**
 
 * **Panel refused a request**: turn on *Allow Status Requests When Not Logged In* on the service.
+* **A door, input or output is missing**: pin its record ID under **Configure > Record IDs and discovery**, or raise
+  *Empty IDs before a scan stops*. A log warning that the panel "did not answer 3 requests in a row" means it stopped
+  answering part-way through a scan.
 * **Changes from other systems are slow to show**: check *Ack Commands* is on and both *Expect Ack* options are off.
 
 **Web interface only**
@@ -276,8 +298,12 @@ than deleting and re-adding the integration, because the two number some records
 <details>
 <summary>Upgrading from 1.x</summary>
 
-Existing entries are migrated automatically: the connection details are kept, the old hand-entered doors, areas, inputs and
-outputs are removed, and everything is re-created from the panel. Entity IDs change, so update dashboards and automations afterwards.
+Existing entries are migrated automatically. The connection details and the hand-entered doors, areas, inputs, outputs and
+trouble inputs (with their names) are kept, the panel is scanned for anything else, and the old entities are moved onto the
+new devices with the same entity IDs and history. The migration finishes the first time the panel answers. The 1.x bypass
+selects are replaced by a **Bypass** switch on each input.
+
+Installs that already moved from 1.x to 2.0–2.2 had their 1.x entities removed then, and can't get them back.
 </details>
 
 ## Development
