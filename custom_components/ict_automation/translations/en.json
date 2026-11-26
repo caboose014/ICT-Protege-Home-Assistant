@@ -11,7 +11,7 @@
       },
       "user": {
         "title": "Connect to your ICT Protege",
-        "description": "Enter the controller's address and a WX web interface operator created just for Home Assistant. HTTPS must be enabled on the controller (firmware 4.00.1676 or later).\n\nHome Assistant then looks for the Automation and Control service. If it answers, it is used for control (pushed live, and arm codes are checked by the panel) and the operator only reads names, so it only needs to view programming. If it doesn't, everything goes through the web interface, so give the operator's role rights to view status and the event log and to control only the areas, doors and outputs you want.",
+        "description": "Enter the controller's address and, for a Protege WX, a web interface operator created just for Home Assistant. HTTPS must be enabled on the controller (firmware 4.00.1676 or later).\n\nHome Assistant then looks for the Automation and Control service. If it answers, it is used for control (pushed live, and arm codes are checked by the panel) and the operator only reads names, so it only needs to view programming. The operator is optional then: leave it empty for a Protege GX, or if you'd rather name things in Home Assistant. If the service doesn't answer, everything goes through the web interface, so the operator is required and its role needs rights to view status and the event log and to control only the areas, doors and outputs you want.",
         "data": {
           "host": "Host",
           "username": "Operator name",
@@ -22,7 +22,8 @@
         "data_description": {
           "host": "IP address or hostname of the Protege controller.",
           "port": "Usually 443.",
-          "control_port": "The IP Port of the Automation and Control service, if your controller has the Automation licence (usually 21000)."
+          "control_port": "The IP Port of the Automation and Control service, if your controller has the Automation licence (usually 21000).",
+          "username": "Optional when the Automation and Control service answers."
         }
       },
       "acs": {
@@ -71,7 +72,8 @@
       "unknown": "Unexpected error. See the logs for details.",
       "web_invalid_auth": "The web interface rejected this operator name or password.",
       "nothing_found": "Couldn't reach the web interface on that HTTPS port, and no Automation and Control service answered. Check the address and ports.",
-      "pin_required": "Enter the integration PIN, or tick the web interface option."
+      "pin_required": "Enter the integration PIN, or tick the web interface option.",
+      "operator_required": "No Automation and Control service answered, so a web interface operator is needed. Enter one, or check the address and the control port."
     },
     "abort": {
       "already_configured": "This panel is already set up.",
@@ -88,7 +90,8 @@
           "names": "Names and zone settings (WX web interface)",
           "events": "Event logging",
           "codes": "Arming codes",
-          "upgrade": "Switch to the Automation and Control service"
+          "upgrade": "Switch to the Automation and Control service",
+          "records": "Record IDs and discovery"
         }
       },
       "names": {
@@ -134,6 +137,21 @@
         "data_description": {
           "pin": "A user PIN with rights to doors, outputs and bypass. It does not need arm or disarm rights: arming always asks for the person's own code."
         }
+      },
+      "records": {
+        "title": "Record IDs and discovery",
+        "description": "With a web operator, its lists say which records exist. Without one, the integration asks the panel for each record ID in turn, from 0 up, and stops after a run of empty IDs. Records the scan misses can be added here: they are always read and never removed by a scan. Separate IDs with commas, use 12-20 for a range, and 19=Garage light to give one a name. Saving restarts the integration, which reads them.",
+        "data": {
+          "doors": "Doors",
+          "areas": "Areas",
+          "inputs": "Inputs",
+          "outputs": "Outputs",
+          "trouble_inputs": "Trouble inputs",
+          "discovery_gap": "Empty IDs before a scan stops"
+        },
+        "data_description": {
+          "discovery_gap": "Each empty ID costs a quick request to the panel. 0 scans every ID, which can take a few minutes."
+        }
       }
     },
     "error": {
@@ -149,7 +167,8 @@
       "code_incomplete": "Enter both a name and a code.",
       "code_too_short": "Use at least 4 digits.",
       "code_name_taken": "That person already has a code. Remove it first to change it.",
-      "wrong_panel": "That control service belongs to a different panel."
+      "wrong_panel": "That control service belongs to a different panel.",
+      "invalid_ids": "Use record IDs (0 or more) separated by commas, ranges like 12-20, or 19=Name."
     },
     "abort": {
       "upgraded": "Switched to the Automation and Control service."

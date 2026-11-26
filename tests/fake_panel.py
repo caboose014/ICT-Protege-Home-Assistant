@@ -47,6 +47,13 @@ class FakePanel:
         self.commands: list[tuple[int, int, int]] = []
         self.acks_received = 0
         self.accept_ack_config = True
+        # Groups whose status requests are refused with this Nack code, or never answered.
+        self.status_nack: dict[int, int] = {}
+        self.status_silent: set[int] = set()
+        # Records that never answer anything (status or monitoring).
+        self.silent: set[tuple[int, int]] = set()
+        # Bytes of area status after the index (the ACS document has 4; some firmware sends fewer).
+        self.area_body = 4
         self.sessions: list[_Session] = []
         self._server: asyncio.base_events.Server | None = None
         self.port = 0
@@ -80,7 +87,7 @@ class FakePanel:
         if group == p.GROUP_DOOR:
             body = idx + bytes((rec[0], rec[1], 0, 0))
         elif group == p.GROUP_AREA:
-            body = idx + bytes((rec[0], rec[1], rec[2], 0))
+            body = idx + bytes((rec[0], rec[1], rec[2], 0))[: self.area_body]
         elif group == p.GROUP_OUTPUT:
             body = idx + rec[0].encode() + bytes((rec[1], 0, 0, 0))
         else:
@@ -144,6 +151,10 @@ class FakePanel:
         index = struct.unpack("<I", payload[:4])[0]
         table = self._table(group)
         if sub == p.SUB_STATUS:
+            if (group, index) in self.silent or group in self.status_silent:
+                return []
+            if group in self.status_nack:
+                return [self._nack(self.status_nack[group])]
             if s.user is None and not self.allow_status_logged_out:
                 return [self._nack(p.NACK_USER_LOGOUT)]
             if index not in table:
@@ -233,6 +244,8 @@ class FakePanel:
             group = payload[0]
             index = struct.unpack("<I", payload[2:6])[0]
             flags = payload[6]
+            if (group, index) in self.silent:
+                return []
             if s.user is None and not self.allow_status_logged_out:
                 return [self._nack(p.NACK_USER_LOGOUT)]
             if index not in self._table(group):

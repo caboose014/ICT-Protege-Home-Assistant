@@ -279,17 +279,23 @@ def _reference(body: bytes) -> str:
 def decode_status(block: p.ICTDataBlock) -> StatusUpdate | None:
     """Decode a record status data block, or return None for other blocks."""
     record_type = RecordType.from_group(block.type_high)
-    if record_type is None or block.type_low != 0x00 or len(block.body) < 6:
+    if record_type is None or block.type_low != 0x00 or len(block.body) < 5:
         return None
     body = block.body
     index = struct.unpack("<I", body[0:4])[0]
     status: Status
     if record_type is RecordType.DOOR:
+        if len(body) < 6:
+            return None
         status = DoorStatus(_enum_or_int(DoorLockState, body[4]), _enum_or_int(DoorState, body[5]))
     elif record_type is RecordType.AREA:
-        if len(body) < 7:
-            return None
-        status = AreaStatus(_enum_or_int(AreaState, body[4]), body[5], body[6])
+        # The ACS document gives 8 bytes (index, state, tamper, flags, reserved). Shorter
+        # blocks are read for what they hold, in the document's order, rather than dropped:
+        # dropping one leaves the area unknown and makes a status request look unanswered.
+        # Missing tamper or flag bytes read as clear.
+        tamper = body[5] if len(body) >= 6 else 0
+        flags = body[6] if len(body) >= 7 else 0
+        status = AreaStatus(_enum_or_int(AreaState, body[4]), tamper, flags)
     elif record_type is RecordType.OUTPUT:
         if len(body) < 13:
             return None

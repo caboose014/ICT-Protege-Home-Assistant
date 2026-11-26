@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import logging
 import struct
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from . import protocol as p
@@ -56,6 +56,27 @@ DEFAULT_DISCOVERY_LIMITS = {
     RecordType.INPUT: 1000,
     RecordType.TROUBLE_INPUT: 1000,
 }
+# Empty record IDs in a row before the scan of a type stops. Panels that number records by
+# record ID leave holes (a GX can start outputs in the high teens), so this is generous:
+# an empty ID costs one quick "index not valid" reply.
+DEFAULT_DISCOVERY_GAP = 32
+# Unanswered probes in a row (timeouts, refusals) before the scan of a type gives up. A panel
+# that stops answering won't start again a few IDs later, and each one costs seconds.
+MAX_UNANSWERED = 3
+
+
+class _Outcome:
+    """A probe that found nothing: the panel said the ID is empty, or gave no usable answer."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __repr__(self) -> str:
+        return self.name
+
+
+ABSENT = _Outcome("ABSENT")
+UNANSWERED = _Outcome("UNANSWERED")
 
 
 class ProtegeError(Exception):
@@ -317,6 +338,20 @@ def _status_matcher(group: int, index: int) -> Callable[[p.ICTPacket], bool]:
     return accept
 
 
+def _status_push_matcher(group: int, index: int) -> Callable[[p.ICTPacket], bool]:
+    """Status data for one record (never a Nack, which belongs to the command)."""
+    match = _status_matcher(group, index)
+    return lambda packet: packet.packet_type == p.PKT_TYPE_DATA and match(packet)
+
+
+def _has_record_ids(found: dict[tuple[RecordType, int], Record]) -> bool:
+    """Display order numbers each type 1..n; an ID 0 or a hole means record IDs."""
+    by_type: dict[RecordType, list[int]] = {}
+    for record_type, index in found:
+        by_type.setdefault(record_type, []).append(index)
+    return any(sorted(ids) != list(range(1, len(ids) + 1)) for ids in by_type.values())
+
+
 def _panel_info_matcher(packet: p.ICTPacket) -> bool:
     if packet.is_nack:
         return True
@@ -375,6 +410,11 @@ class ProtegeClient:
         self._door_check: dict[int, asyncio.Task] = {}
         self._stopping = False
         self._available = False
+        # Record types whose status requests the panel refused or ignored; those are read
+        # through a force-update monitoring request instead.
+        self._read_by_monitor: set[RecordType] = set()
+        # From the last discover(): IDs probed without a usable answer (not proof they are gone).
+        self.unanswered: set[tuple[RecordType, int]] = set()
 
     # ----- listeners -----------------------------------------------------
 
@@ -509,6 +549,7 @@ class ProtegeClient:
         if self._conn.connected:
             await self._restore_monitoring()
             self._set_available(True)
+            self._spawn(self.read_missing_status())
         self._tasks = [
             asyncio.create_task(self._supervisor(), name="ict_protege_supervisor"),
             asyncio.create_task(self._poll_loop(), name="ict_protege_poll"),
@@ -555,6 +596,7 @@ class ProtegeClient:
                     await self._restore_monitoring()
                     _LOGGER.info("Connected to ICT panel at %s:%s", self.host, self.port)
                     self._set_available(True)
+                    self._spawn(self.read_missing_status())
                 except ProtegeError as err:
                     _LOGGER.debug("Reconnect failed: %s", err)
                     await self._conn.close()
@@ -618,9 +660,13 @@ class ProtegeClient:
     # ----- status and discovery -------------------------------------------
 
     async def request_status(self, record_type: RecordType, index: int) -> Status | None:
-        """Ask for one record's status. Returns None if the record does not exist."""
+        """Read one record's status. Returns None if the record does not exist.
+
+        Raises CommandRejected when the panel refuses the request for another reason (for
+        example no user is logged in), and ProtegeTimeout when it does not answer.
+        """
         async with self._conn.lock:
-            return await self._request_status_locked(record_type, index)
+            return await self._read_status_locked(record_type, index)
 
     async def _request_status_locked(
         self, record_type: RecordType, index: int, *, timeout: float | None = None
@@ -631,68 +677,198 @@ class ProtegeClient:
             timeout=timeout,
         )
         if reply.is_nack:
-            if reply.nack_code == p.NACK_USER_LOGOUT:
-                raise CommandRejected(reply.nack_code)
-            return None
+            # Only "index not valid" says the record is not there. Any other Nack (no user
+            # logged in, no rights, command not valid) is a refusal, not an answer.
+            if reply.nack_code == p.NACK_SERVICE_INDEX_NOT_VALID:
+                return None
+            raise CommandRejected(reply.nack_code)
         return self.status.get((record_type, index))
+
+    async def _monitor_status_locked(
+        self, record_type: RecordType, index: int, *, timeout: float | None = None
+    ) -> Status | None:
+        """Read a record by asking to monitor it with the force-update flag.
+
+        The panel answers a monitoring request with the record's current status, and
+        monitoring is a system command, so this can work where a status request is refused.
+        Records outside the monitored set are unsubscribed again afterwards. Returns None
+        if the record does not exist; raises CommandRejected or ProtegeTimeout otherwise.
+        """
+        key = (record_type, index)
+        # Wait for the push before sending: it can arrive in the same read as the Ack.
+        pushed = self._conn._add_waiter(_status_push_matcher(record_type.group, index))
+        try:
+            reply = await self._conn.request(
+                p.build_monitor(record_type.group, index, start=True, force_update=True),
+                _is_system,
+                timeout=timeout,
+            )
+            if reply.is_nack:
+                if reply.nack_code == p.NACK_SERVICE_INDEX_NOT_VALID:
+                    return None
+                raise CommandRejected(reply.nack_code)
+            await self._conn._await(pushed, timeout)
+            return self.status.get(key)
+        finally:
+            if not pushed.done():
+                pushed.cancel()
+                self._conn._waiters = [w for w in self._conn._waiters if w.future is not pushed]
+            if self._conn.connected and not any(r.key == key for r in self._monitored):
+                with contextlib.suppress(ProtegeError):
+                    await self._conn.command(
+                        p.build_monitor(record_type.group, index, start=False, force_update=False),
+                        timeout=1.0,
+                    )
+
+    async def _read_status_locked(
+        self, record_type: RecordType, index: int, *, timeout: float | None = None
+    ) -> Status | None:
+        """Status request, falling back to a monitoring read where status requests fail.
+
+        Once a type's status requests have failed and a monitoring read worked, that type is
+        read through monitoring from then on, so a panel that ignores one kind of request
+        does not cost a timeout on every poll. "No user logged in" is passed straight on.
+        """
+        if record_type in self._read_by_monitor:
+            return await self._monitor_status_locked(record_type, index, timeout=timeout)
+        try:
+            return await self._request_status_locked(record_type, index, timeout=timeout)
+        except CommandRejected as err:
+            if err.code == p.NACK_USER_LOGOUT:
+                raise
+            first: ProtegeError = err
+        except ProtegeTimeout as err:
+            first = err
+        try:
+            status = await self._monitor_status_locked(record_type, index, timeout=timeout)
+        except ProtegeError:
+            raise first from None
+        if status is not None:
+            _LOGGER.debug("Reading %s status through monitoring (%s)", record_type.value, first)
+            self._read_by_monitor.add(record_type)
+        return status
+
+    async def read_missing_status(self, *, timeout: float = 2.0) -> None:
+        """Read the records that monitoring has not reported yet.
+
+        Monitoring is registered with the force-update flag, but a record the panel does not
+        report straight away would otherwise stay unknown until the next poll.
+        """
+        timeouts = 0
+        for record in list(self.records.values()):
+            if self._stopping or not self._conn.connected or timeouts >= MAX_UNANSWERED:
+                return
+            if record.key in self.status:
+                continue
+            try:
+                async with self._conn.lock:
+                    await self._read_status_locked(record.record_type, record.index, timeout=timeout)
+                timeouts = 0
+            except CannotConnect:
+                return
+            except ProtegeError as err:
+                timeouts = timeouts + 1 if isinstance(err, ProtegeTimeout) else 0
+                _LOGGER.debug("No status yet for %s %s: %s", record.record_type.value, record.index, err)
 
     async def discover(
         self,
         limits: dict[RecordType, int] | None = None,
         *,
         listed: dict[RecordType, list[int]] | None = None,
-        gap_tolerance: int = 3,
+        extra: Iterable[tuple[RecordType, int]] = (),
+        gap_tolerance: int = DEFAULT_DISCOVERY_GAP,
         probe_timeout: float = 1.5,
     ) -> list[Record]:
         """Find every record on the panel.
 
         With `listed` (record IDs per type from the web interface), the panel is first asked
         whether it numbers records by record ID (the default on GX/WX) or by display order
-        (the ACPUseDisplayOrder command). By record ID, exactly the listed records are read;
-        otherwise status is probed from 1 until indexes run out.
+        (the ACPUseDisplayOrder command). By record ID, exactly the listed records are read.
+        Otherwise each type is scanned from ID 0 until `gap_tolerance` IDs in a row are empty
+        (0 scans up to the limit). `extra` IDs (saved or pinned records) are always read, even
+        past a gap.
+
+        Only the panel's "index not valid" reply counts as an empty ID. IDs that got no
+        usable answer are left in `self.unanswered`, so callers can keep what they had.
         """
         limits = limits or DEFAULT_DISCOVERY_LIMITS
-        found: list[Record] = []
+        found: dict[tuple[RecordType, int], Record] = {}
+        results: dict[tuple[RecordType, int], Status | _Outcome] = {}
+        self.unanswered = set()
         self.numbering = NUMBERING_DISPLAY_ORDER
         logged_in = False
 
-        async def probe(record_type: RecordType, index: int) -> Status | None:
+        async def probe(record_type: RecordType, index: int) -> Status | _Outcome:
             nonlocal logged_in
             try:
-                return await self._request_status_locked(record_type, index, timeout=probe_timeout)
+                status = await self._read_status_locked(record_type, index, timeout=probe_timeout)
+                if status is None:
+                    return ABSENT
+                return status
             except CommandRejected as err:
                 if err.code != p.NACK_USER_LOGOUT or logged_in:
-                    raise
-                # Status requests need a login on this service; use the PIN.
-                await self._login(self.pin)
-                logged_in = True
-                return await self._request_status_locked(record_type, index, timeout=probe_timeout)
+                    return UNANSWERED
             except ProtegeTimeout:
-                return None
+                return UNANSWERED
+            # Status requests need a login on this service; use the PIN.
+            await self._login(self.pin)
+            logged_in = True
+            return await probe(record_type, index)
 
-        def add(record_type: RecordType, index: int, status: Status) -> None:
-            found.append(Record(record_type, index, reference=getattr(status, "reference", None) or None))
+        async def read(record_type: RecordType, index: int) -> Status | _Outcome:
+            key = (record_type, index)
+            if key not in results:
+                results[key] = result = await probe(record_type, index)
+                if result is UNANSWERED:
+                    self.unanswered.add(key)
+                elif not isinstance(result, _Outcome):
+                    reference = getattr(result, "reference", None) or None
+                    found[key] = Record(record_type, index, reference=reference)
+            return results[key]
+
+        async def scan(record_type: RecordType) -> None:
+            misses = unanswered = 0
+            for index in range(limits.get(record_type, 0) + 1):
+                result = await read(record_type, index)
+                if not isinstance(result, _Outcome):
+                    misses = unanswered = 0
+                    continue
+                misses += 1
+                unanswered = unanswered + 1 if result is UNANSWERED else 0
+                if unanswered >= MAX_UNANSWERED:
+                    _LOGGER.warning(
+                        "Stopped looking for %s records at ID %s: the panel did not answer %s requests in a row",
+                        record_type.value,
+                        index,
+                        unanswered,
+                    )
+                    return
+                if gap_tolerance and misses >= gap_tolerance:
+                    return
+
+        async def numbered_by_record_id(listed: dict[RecordType, list[int]]) -> bool:
+            # One read tells: a listed ID above the record count exists only when numbered
+            # by record ID. When every type's IDs are simply 1..n the two agree.
+            for record_type in MONITOR_PRIORITY:
+                ids = listed.get(record_type) or []
+                if ids and sorted(ids) != list(range(1, len(ids) + 1)):
+                    return not isinstance(await read(record_type, max(ids)), _Outcome)
+            return False
 
         async with self._conn.lock:
             try:
-                if listed and await self._numbered_by_record_id(listed, probe):
+                if listed and await numbered_by_record_id(listed):
                     self.numbering = NUMBERING_RECORD_ID
                     for record_type in MONITOR_PRIORITY:
                         for index in listed.get(record_type, []):
-                            if (status := await probe(record_type, index)) is not None:
-                                add(record_type, index, status)
+                            await read(record_type, index)
                 else:
                     for record_type in MONITOR_PRIORITY:
-                        misses = 0
-                        for index in range(1, limits.get(record_type, 0) + 1):
-                            status = await probe(record_type, index)
-                            if status is None:
-                                misses += 1
-                                if misses >= gap_tolerance:
-                                    break
-                                continue
-                            misses = 0
-                            add(record_type, index, status)
+                        await scan(record_type)
+                    if _has_record_ids(found):
+                        self.numbering = NUMBERING_RECORD_ID
+                for record_type, index in extra:
+                    await read(record_type, index)
             finally:
                 if logged_in:
                     with contextlib.suppress(ProtegeError):
@@ -700,22 +876,7 @@ class ProtegeClient:
         if logged_in and self._monitored:
             # Logging in and out cleared monitoring on the panel.
             await self._restore_monitoring()
-        return found
-
-    @staticmethod
-    async def _numbered_by_record_id(
-        listed: dict[RecordType, list[int]],
-        probe: Callable[[RecordType, int], Awaitable[Status | None]],
-    ) -> bool:
-        """One probe tells: a listed ID above the record count exists only when numbered by record ID.
-
-        When every type's IDs are simply 1..n the two numberings agree, so display order is used.
-        """
-        for record_type in MONITOR_PRIORITY:
-            ids = listed.get(record_type) or []
-            if ids and sorted(ids) != list(range(1, len(ids) + 1)):
-                return await probe(record_type, max(ids)) is not None
-        return False
+        return sorted(found.values(), key=lambda r: (MONITOR_PRIORITY.index(r.record_type), r.index))
 
     # ----- commands -------------------------------------------------------
 
@@ -809,14 +970,28 @@ class ProtegeClient:
 
     async def refresh_all(self) -> None:
         """Read the status of every record (safety net for missed pushes)."""
+        failed = timeouts = 0
         for record in list(self.records.values()):
             if self._stopping or not self._conn.connected:
                 return
             try:
                 await self.request_status(record.record_type, record.index)
-            except ProtegeError as err:
-                _LOGGER.debug("Status refresh stopped: %s", err)
+                timeouts = 0
+            except CannotConnect:
                 return
+            except ProtegeError as err:
+                # One record that doesn't answer must not hold back the rest, but a panel
+                # that has gone quiet is left to the keepalive to deal with.
+                failed += 1
+                timeouts = timeouts + 1 if isinstance(err, ProtegeTimeout) else 0
+                if timeouts >= MAX_UNANSWERED:
+                    _LOGGER.debug("Status refresh stopped: %s requests in a row timed out", timeouts)
+                    return
+                _LOGGER.debug(
+                    "Status refresh of %s %s failed: %s", record.record_type.value, record.index, err
+                )
+        if failed:
+            _LOGGER.debug("Status refresh: %s of %s records did not answer", failed, len(self.records))
 
     async def door_lock(self, index: int) -> None:
         await self._run_command(

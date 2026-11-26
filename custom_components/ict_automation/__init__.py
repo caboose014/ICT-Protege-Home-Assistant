@@ -11,11 +11,19 @@ from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_USERNA
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
 
-from .const import CONF_CONNECTION, CONF_NUMBERING, CONF_PIN, CONF_RECORDS, CONNECTION_WEB, DOMAIN
+from .const import (
+    CONF_CONNECTION,
+    CONF_LEGACY_V1,
+    CONF_NUMBERING,
+    CONF_PIN,
+    CONF_RECORDS,
+    CONNECTION_ACS,
+    CONNECTION_WEB,
+    DOMAIN,
+)
 from .hub import (
     ProtegeHub,
     async_discover_records,
@@ -23,7 +31,9 @@ from .hub import (
     records_to_data,
     remove_stale_devices,
 )
+from .migrate_v1 import async_rename_v1_registries, records_from_v1
 from .protege import ProtegeClient, ProtegeError
+from .protege.client import NUMBERING_RECORD_ID
 from .protege.web import ProtegeWebClient, WebAuthError
 from .upgrade import CHECK_INTERVAL, async_check_control_service, session_store
 
@@ -91,7 +101,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ProtegeConfigEntry) -> b
     try:
         await client.connect()
     except ProtegeError as err:
-        if not entry.data.get(CONF_RECORDS):
+        if not entry.data.get(CONF_RECORDS) or entry.data.get(CONF_LEGACY_V1):
+            # A 1.x entry waits for the panel: its entities are renamed with the panel's serial.
             raise ConfigEntryNotReady(f"Cannot reach the panel: {err}") from err
         _LOGGER.warning("Panel unreachable (%s); starting with saved records and retrying", err)
     else:
@@ -103,6 +114,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ProtegeConfigEntry) -> b
             await client.disconnect()
             raise ConfigEntryNotReady(f"Discovery failed: {err}") from err
         data = {**entry.data, CONF_RECORDS: records_to_data(records), CONF_NUMBERING: client.numbering}
+        if data.pop(CONF_LEGACY_V1, False):
+            async_rename_v1_registries(
+                hass,
+                entry,
+                entry.unique_id or client.panel.serial_str or entry.entry_id,
+                records,
+                client.numbering == NUMBERING_RECORD_ID,
+            )
         if data != entry.data:
             hass.config_entries.async_update_entry(entry, data=data)
     return await _async_finish_setup(hass, entry, client)
@@ -157,21 +176,21 @@ async def async_unload_entry(hass: HomeAssistant, entry: ProtegeConfigEntry) -> 
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Migrate entries made by the 1.x integration."""
+    """Migrate entries made by the 1.x integration.
+
+    The records typed into 1.x are kept and read on the next start, and once the panel
+    answers their entities are renamed to the new unique IDs, so history carries over.
+    """
     if entry.version == 1:
-        # 1.x kept hand-entered records in options and used different unique IDs.
-        # Start clean: keep the connection details, drop the old entities and devices.
-        ent_reg = er.async_get(hass)
-        for entity in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
-            ent_reg.async_remove(entity.entity_id)
-        dev_reg = dr.async_get(hass)
-        for device in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
-            dev_reg.async_remove_device(device.id)
+        records = records_from_v1(dict(entry.options))
         data = {
             CONF_HOST: entry.data[CONF_HOST],
             CONF_PORT: int(entry.data.get(CONF_PORT, 21000)),
             CONF_PIN: str(entry.data.get("password", "")),
+            CONF_CONNECTION: CONNECTION_ACS,
+            CONF_RECORDS: records_to_data(records),
+            CONF_LEGACY_V1: True,
         }
         hass.config_entries.async_update_entry(entry, data=data, options={}, version=2)
-        _LOGGER.info("Migrated ICT Protege entry %s to version 2", entry.title)
+        _LOGGER.info("Migrated ICT Protege entry %s to version 2 with %d records", entry.title, len(records))
     return True

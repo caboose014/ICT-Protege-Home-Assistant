@@ -19,10 +19,12 @@ from homeassistant.helpers.device_registry import DeviceInfo
 
 from .const import (
     CONF_CONNECTION,
+    CONF_DISCOVERY_GAP,
     CONF_EVENTS_PIN,
     CONF_EVENTS_PORT,
     CONF_NUMBERING,
     CONF_PIN,
+    CONF_PINNED,
     CONF_RECORDS,
     CONF_WX_PASSWORD,
     CONF_WX_PORT,
@@ -45,7 +47,7 @@ from .protege import (
     RecordType,
     StatusUpdate,
 )
-from .protege.client import NUMBERING_RECORD_ID
+from .protege.client import DEFAULT_DISCOVERY_GAP, MONITOR_PRIORITY, NUMBERING_RECORD_ID
 from .protege.wx import NO_RECORD, WXClient, WXError, WXSite, apply_names, apply_zone_settings
 
 _LOGGER = logging.getLogger(__name__)
@@ -96,6 +98,15 @@ def records_from_data(data: list[dict[str, Any]]) -> list[Record]:
     ]
 
 
+def pinned_records(entry: ConfigEntry) -> list[Record]:
+    """Record IDs pinned under Configure > Record IDs."""
+    return records_from_data(entry.options.get(CONF_PINNED) or [])
+
+
+def discovery_gap(entry: ConfigEntry) -> int:
+    return int(entry.options.get(CONF_DISCOVERY_GAP, DEFAULT_DISCOVERY_GAP))
+
+
 async def async_discover_records(
     hass: HomeAssistant, entry: ConfigEntry, client: ProtegeClient
 ) -> list[Record]:
@@ -103,35 +114,56 @@ async def async_discover_records(
 
     When an operator login is configured, the web interface is read first (one login):
     its record IDs tell discovery which records to read, and give names and zone settings.
-    Names saved from the last successful read are used when it can't be reached.
+    Without it the panel is scanned, and the records saved last time are read as well, so
+    a record past a gap is not lost. A saved record the panel did not answer for is kept;
+    only the panel saying the ID is empty removes it. Pinned records are always kept.
     """
     site = await _async_read_site(hass, entry)
     saved = {r.key: r for r in records_from_data(entry.data.get(CONF_RECORDS, []))}
+    pinned = {r.key: r for r in pinned_records(entry)}
     listed: dict[RecordType, list[int]] = {}
     if site is not None:
         for record_type, items in site.lists.items():
             listed[record_type] = [rec_id for rec_id, _ in items if rec_id not in NO_RECORD]
+        extra = list(pinned)
     else:
-        # Without the web interface, the records found last time still tell how the panel numbers them.
-        for record_type, index in saved:
-            listed.setdefault(record_type, []).append(index)
-    records = await client.discover(listed=listed or None)
-    for record in records:
+        extra = sorted({*saved, *pinned}, key=lambda key: (key[0].value, key[1]))
+    found = await client.discover(listed=listed or None, extra=extra, gap_tolerance=discovery_gap(entry))
+    if site is None and entry.data.get(CONF_NUMBERING) and saved:
+        # Without the web interface the numbering only marks unique IDs; keep it stable so a
+        # scan that now reaches ID 0 or a hole does not rename every entity.
+        client.numbering = entry.data[CONF_NUMBERING]
+    records = {r.key: r for r in found}
+    for key in client.unanswered:
+        if key in saved and key not in records:
+            _LOGGER.debug("Keeping %s %s: the panel did not answer for it", key[0].value, key[1])
+            records[key] = saved[key]
+    for key, pin in pinned.items():
+        if key not in records:
+            _LOGGER.warning("Pinned %s %s was not found on the panel; keeping it", key[0].value, key[1])
+            records[key] = Record(pin.record_type, pin.index)
+    for record in records.values():
         if (old := saved.get(record.key)) is not None:
+            record.reference = record.reference or old.reference
             record.name = record.name or old.name
             record.areas = old.areas if record.areas is None else record.areas
             record.arm_open = old.arm_open if record.arm_open is None else record.arm_open
+    result = sorted(records.values(), key=lambda r: (MONITOR_PRIORITY.index(r.record_type), r.index))
     if site is not None:
         by_id = client.numbering == NUMBERING_RECORD_ID
-        named = apply_names(records, site.lists, by_id=by_id)
-        zoned = apply_zone_settings(records, site, by_id=by_id)
+        named = apply_names(result, site.lists, by_id=by_id)
+        zoned = apply_zone_settings(result, site, by_id=by_id)
         _LOGGER.debug(
             "Panel numbers records by %s; named %d records and read zone settings for %d inputs",
             client.numbering,
             named,
             zoned,
         )
-    return records
+    for record in result:
+        # A name typed with a pinned ID wins over the web interface's.
+        if (pin := pinned.get(record.key)) is not None and pin.name:
+            record.name = pin.name
+    return result
 
 
 async def _async_read_site(hass: HomeAssistant, entry: ConfigEntry) -> WXSite | None:

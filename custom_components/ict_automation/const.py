@@ -49,3 +49,10 @@ CONF_NUMBERING = "numbering"
 CODE_MODE_HA = "ha_codes"  # codes kept (hashed) by the integration
 CODE_MODE_NONE = "none"  # no code; Home Assistant's own permissions only
 CONF_CODES = "codes"
+
+# Discovery options (control service only): record IDs the person pins, which are always
+# read and never dropped by a scan, and how many empty IDs in a row end a scan (0 = no limit).
+CONF_PINNED = "pinned_records"
+CONF_DISCOVERY_GAP = "discovery_gap"
+# Set when a 1.x entry is migrated: its entities are renamed once the panel is reached.
+CONF_LEGACY_V1 = "legacy_v1"

@@ -9,9 +9,11 @@ from homeassistant.data_entry_flow import FlowResultType
 
 from custom_components.ict_automation.const import (
     CONF_CONTROL_PORT,
+    CONF_DISCOVERY_GAP,
     CONF_EVENTS_PIN,
     CONF_EVENTS_PORT,
     CONF_PIN,
+    CONF_PINNED,
     CONF_RECORDS,
     DOMAIN,
 )
@@ -88,3 +90,60 @@ async def test_options_flow_events(hass: HomeAssistant, panel: FakePanel) -> Non
         await hass.config_entries.async_unload(entry.entry_id)
     finally:
         await events_panel.stop()
+
+
+async def test_operator_is_optional_with_the_control_service(hass: HomeAssistant, panel: FakePanel) -> None:
+    """A Protege GX has no WX web interface: setup goes ahead on the control service alone."""
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_HOST: "127.0.0.1", CONF_PORT: 1, CONF_CONTROL_PORT: panel.port}
+    )
+    assert result["step_id"] == "acs"
+    assert "No web operator" in result["description_placeholders"]["names"]
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_PIN: "1234"})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["result"].options == {}
+    await hass.async_block_till_done()
+    await hass.config_entries.async_unload(result["result"].entry_id)
+
+
+async def test_operator_is_required_without_the_control_service(hass: HomeAssistant, socket_enabled) -> None:
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_HOST: "127.0.0.1", CONF_PORT: 1, CONF_CONTROL_PORT: 1}
+    )
+    assert result["errors"] == {"base": "operator_required"}
+
+
+async def test_options_flow_record_ids(hass: HomeAssistant, panel: FakePanel) -> None:
+    panel.outputs[300] = ["CP001:09", 0]
+    result = await _start_flow(hass, panel.port)
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_PIN: "1234"})
+    entry = result["result"]
+    await hass.async_block_till_done()
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "records"})
+    assert result["step_id"] == "records"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"outputs": "1-2, x", CONF_DISCOVERY_GAP: 16}
+    )
+    assert result["errors"] == {"outputs": "invalid_ids"}
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"outputs": "300=Garage light", CONF_DISCOVERY_GAP: 16}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_DISCOVERY_GAP] == 16
+    assert entry.options[CONF_PINNED] == [
+        {"type": "output", "index": 300, "reference": None, "name": "Garage light"}
+    ]
+    await hass.async_block_till_done()
+    # Saving reloads the entry, which reads the pinned output.
+    assert hass.states.get("switch.garage_light") is not None
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "records"})
+    schema = result["data_schema"].schema
+    outputs = next(k for k in schema if k == "outputs")
+    assert outputs.description == {"suggested_value": "300=Garage light"}
+    await hass.config_entries.async_unload(entry.entry_id)

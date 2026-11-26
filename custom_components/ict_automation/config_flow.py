@@ -21,10 +21,12 @@ from .const import (
     CONF_CODES,
     CONF_CONNECTION,
     CONF_CONTROL_PORT,
+    CONF_DISCOVERY_GAP,
     CONF_EVENTS_PIN,
     CONF_EVENTS_PORT,
     CONF_NUMBERING,
     CONF_PIN,
+    CONF_PINNED,
     CONF_RECORDS,
     CONF_USE_WEB,
     CONF_WX_PASSWORD,
@@ -36,8 +38,17 @@ from .const import (
     DEFAULT_WX_PORT,
     DOMAIN,
 )
-from .hub import records_from_data, records_to_data
-from .protege import CannotConnect, InvalidPin, ProtegeClient, ProtegeError, ProtegeEventClient, RecordType
+from .hub import discovery_gap, pinned_records, records_from_data, records_to_data
+from .protege import (
+    CannotConnect,
+    InvalidPin,
+    ProtegeClient,
+    ProtegeError,
+    ProtegeEventClient,
+    Record,
+    RecordType,
+)
+from .protege.client import DEFAULT_DISCOVERY_GAP
 from .protege.web import ProtegeWebClient, WebAuthError
 from .protege.wx import WXAuthError, WXClient, WXError
 from .upgrade import WrongPanel, async_upgrade, control_port, control_service_answers
@@ -62,29 +73,99 @@ def _schema(defaults: dict[str, Any]) -> vol.Schema:
 
 
 async def _validate(
-    data: dict[str, Any], listed: dict[RecordType, list[int]] | None = None
+    data: dict[str, Any],
+    listed: dict[RecordType, list[int]] | None = None,
+    *,
+    extra: list[tuple[RecordType, int]] | None = None,
+    gap: int = DEFAULT_DISCOVERY_GAP,
 ) -> tuple[str | None, str, list[dict[str, Any]], str]:
     """Connect, check the PIN, and discover records. Returns (serial, title, records, numbering).
 
     `listed` is the web interface's record IDs, so discovery can tell how the panel numbers records.
+    `extra` IDs (saved or pinned records) are read as well as whatever the scan finds.
     """
     client = ProtegeClient(data[CONF_HOST], int(data[CONF_PORT]), data[CONF_PIN])
     info = await client.connect()
     try:
         await client.verify_pin()
-        records = await client.discover(listed=listed)
+        records = await client.discover(listed=listed, extra=extra or (), gap_tolerance=gap)
     finally:
         await client.disconnect()
     title = f"Protege {info.firmware_type or 'WX'} ({data[CONF_HOST]})"
     return info.serial_str, title, records_to_data(records), client.numbering
 
 
+# Option fields for pinned record IDs, by type.
+PIN_FIELDS = (
+    ("doors", RecordType.DOOR),
+    ("areas", RecordType.AREA),
+    ("inputs", RecordType.INPUT),
+    ("outputs", RecordType.OUTPUT),
+    ("trouble_inputs", RecordType.TROUBLE_INPUT),
+)
+
+
+def parse_id_list(text: str) -> list[tuple[int, str | None]]:
+    """Parse "0, 12-20, 19=Garage light" into (ID, name) pairs. Raises ValueError.
+
+    Commas, semicolons or new lines separate items. A range can't carry a name, and a
+    later item replaces an earlier one with the same ID.
+    """
+    ids: dict[int, str | None] = {}
+    for raw in text.replace(";", ",").replace("\n", ",").split(","):
+        item = raw.strip()
+        if not item:
+            continue
+        name: str | None = None
+        if "=" in item:
+            item, name = (part.strip() for part in item.split("=", 1))
+            name = name or None
+        if "-" in item:
+            if name is not None:
+                raise ValueError("a range can't have a name")
+            low, high = (int(part) for part in item.split("-", 1))
+            if low < 0 or high < low or high - low > 1000:
+                raise ValueError("bad range")
+            ids.update({index: ids.get(index) for index in range(low, high + 1)})
+        else:
+            index = int(item)
+            if index < 0:
+                raise ValueError("negative ID")
+            ids[index] = name
+    return sorted(ids.items())
+
+
+def format_id_list(records: list[Record]) -> str:
+    """The reverse of parse_id_list, joining runs of unnamed IDs into ranges."""
+    parts: list[str] = []
+    run: list[int] = []
+
+    def flush() -> None:
+        if run:
+            parts.append(str(run[0]) if len(run) == 1 else f"{run[0]}-{run[-1]}")
+            run.clear()
+
+    for record in sorted(records, key=lambda r: r.index):
+        if record.name:
+            flush()
+            parts.append(f"{record.index}={record.name}")
+        elif run and record.index == run[-1] + 1:
+            run.append(record.index)
+        else:
+            flush()
+            run.append(record.index)
+    flush()
+    return ", ".join(parts)
+
+
 def _user_schema(defaults: dict[str, Any]) -> vol.Schema:
     return vol.Schema(
         {
             vol.Required(CONF_HOST, default=defaults.get(CONF_HOST, "")): str,
-            vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME, "")): str,
-            vol.Required(CONF_PASSWORD, default=defaults.get(CONF_PASSWORD, "")): PASSWORD_SELECTOR,
+            vol.Optional(CONF_USERNAME, description={"suggested_value": defaults.get(CONF_USERNAME)}): str,
+            vol.Optional(
+                CONF_PASSWORD, description={"suggested_value": defaults.get(CONF_PASSWORD)}
+            ): PASSWORD_SELECTOR,
             vol.Required(CONF_PORT, default=defaults.get(CONF_PORT, DEFAULT_WX_PORT)): PORT_SELECTOR,
             vol.Required(
                 CONF_CONTROL_PORT, default=defaults.get(CONF_CONTROL_PORT, DEFAULT_PORT)
@@ -175,36 +256,38 @@ class ProtegeConfigFlow(ConfigFlow, domain=DOMAIN):
         """Address and web operator, then look for the Automation and Control service.
 
         The control service is used when it answers (it needs the Automation licence);
-        otherwise everything goes through the web interface.
+        otherwise everything goes through the web interface. The operator is optional with
+        the control service (a Protege GX has no WX web interface): if it is left out or
+        its login fails, setup carries on and the next step says names won't be read.
         """
         errors: dict[str, str] = {}
         if user_input is not None:
             login = {
                 CONF_HOST: user_input[CONF_HOST].strip(),
                 CONF_PORT: int(user_input[CONF_PORT]),
-                CONF_USERNAME: user_input[CONF_USERNAME].strip(),
-                CONF_PASSWORD: user_input[CONF_PASSWORD],
+                CONF_USERNAME: (user_input.get(CONF_USERNAME) or "").strip(),
+                CONF_PASSWORD: user_input.get(CONF_PASSWORD) or "",
                 CONF_CONTROL_PORT: int(user_input[CONF_CONTROL_PORT]),
             }
             self._async_abort_entries_match({CONF_HOST: login[CONF_HOST]})
             self._web, self._web_error = None, None
-            try:
-                self._web = await _validate_web(self.hass, login)
-            except Exception as err:  # noqa: BLE001
-                self._web_error = err
-            # A wrong operator login is always worth fixing first.
-            if isinstance(self._web_error, WebAuthError):
+            if login[CONF_USERNAME] and login[CONF_PASSWORD]:
+                try:
+                    self._web = await _validate_web(self.hass, login)
+                except Exception as err:  # noqa: BLE001
+                    self._web_error = err
+            self._login = login
+            if await control_service_answers(login[CONF_HOST], login[CONF_CONTROL_PORT]):
+                return await self.async_step_acs()
+            if not login[CONF_USERNAME] or not login[CONF_PASSWORD]:
+                # Without the control service everything goes through the web operator.
+                errors = {"base": "operator_required"}
+            elif isinstance(self._web_error, CannotConnect):
+                errors = {"base": "nothing_found"}
+            elif self._web_error is not None:
                 errors = _errors_for(self._web_error)
             else:
-                self._login = login
-                if await control_service_answers(login[CONF_HOST], login[CONF_CONTROL_PORT]):
-                    return await self.async_step_acs()
-                if isinstance(self._web_error, CannotConnect):
-                    errors = {"base": "nothing_found"}
-                elif self._web_error is not None:
-                    errors = _errors_for(self._web_error)
-                else:
-                    return await self.async_step_web()
+                return await self.async_step_web()
         return self.async_show_form(step_id="user", data_schema=_user_schema(user_input or {}), errors=errors)
 
     async def async_step_acs(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
@@ -262,12 +345,23 @@ class ProtegeConfigFlow(ConfigFlow, domain=DOMAIN):
                 vol.Optional(CONF_USE_WEB, default=False): selector.BooleanSelector(),
             }
         )
-        names = (
-            "Names and zone settings will be read with the web operator."
-            if self._web is not None
-            else "The web interface could not be reached, so names come from module references "
-            "until you set an operator under Configure."
-        )
+        if self._web is not None:
+            names = "Names and zone settings will be read with the web operator."
+        elif isinstance(self._web_error, WebAuthError):
+            names = (
+                "The web interface rejected the operator, so names are not read. Go back to fix it, "
+                "or carry on and set an operator later under Configure."
+            )
+        elif self._login.get(CONF_USERNAME):
+            names = (
+                "The web interface could not be reached, so names come from module references "
+                "(such as Door 0 or Input CP001:02) until you set an operator under Configure."
+            )
+        else:
+            names = (
+                "No web operator was given, so names come from module references (such as Door 0 "
+                "or Input CP001:02). Rename them in Home Assistant, or set an operator later under Configure."
+            )
         return self.async_show_form(
             step_id="acs",
             data_schema=schema,
@@ -331,11 +425,12 @@ class ProtegeConfigFlow(ConfigFlow, domain=DOMAIN):
                 if web:
                     serial, _title, records = await _validate_web(self.hass, {**entry.data, **user_input})
                 else:
-                    listed: dict[RecordType, list[int]] = {}
-                    for r in records_from_data(entry.data.get(CONF_RECORDS, [])):
-                        listed.setdefault(r.record_type, []).append(r.index)
-                    serial, _title, records, numbering = await _validate(user_input, listed or None)
-                    extra[CONF_NUMBERING] = numbering
+                    keep = [r.key for r in records_from_data(entry.data.get(CONF_RECORDS, []))]
+                    keep += [r.key for r in pinned_records(entry)]
+                    serial, _title, records, numbering = await _validate(
+                        user_input, extra=keep, gap=discovery_gap(entry)
+                    )
+                    extra[CONF_NUMBERING] = entry.data.get(CONF_NUMBERING) or numbering
             except Exception as err:  # noqa: BLE001
                 errors = _errors_for(err)
             else:
@@ -365,7 +460,45 @@ class ProtegeOptionsFlow(OptionsFlow):
         if self.config_entry.data.get(CONF_CONNECTION) == CONNECTION_WEB:
             # Names and events already come from the web interface.
             return self.async_show_menu(step_id="init", menu_options=["codes", "upgrade"])
-        return self.async_show_menu(step_id="init", menu_options=["names", "events"])
+        return self.async_show_menu(step_id="init", menu_options=["names", "events", "records"])
+
+    async def async_step_records(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Record IDs to always keep, and how far a scan looks past empty IDs."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            pinned: list[Record] = []
+            for field, record_type in PIN_FIELDS:
+                try:
+                    pinned += [
+                        Record(record_type, index, name=name)
+                        for index, name in parse_id_list(user_input.get(field) or "")
+                    ]
+                except ValueError:
+                    errors[field] = "invalid_ids"
+            if not errors:
+                return self._save(
+                    {
+                        CONF_PINNED: records_to_data(pinned) or None,
+                        CONF_DISCOVERY_GAP: int(user_input[CONF_DISCOVERY_GAP]),
+                    }
+                )
+        current = user_input or {
+            field: format_id_list([r for r in pinned_records(self.config_entry) if r.record_type is rt])
+            for field, rt in PIN_FIELDS
+        }
+        gap = (user_input or {}).get(CONF_DISCOVERY_GAP, discovery_gap(self.config_entry))
+        schema = vol.Schema(
+            {
+                **{
+                    vol.Optional(field, description={"suggested_value": current.get(field) or None}): str
+                    for field, _ in PIN_FIELDS
+                },
+                vol.Required(CONF_DISCOVERY_GAP, default=gap): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=0, max=250, mode=selector.NumberSelectorMode.BOX)
+                ),
+            }
+        )
+        return self.async_show_form(step_id="records", data_schema=schema, errors=errors)
 
     async def async_step_codes(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Web-only mode: whether arming needs a code, and whose codes are accepted."""

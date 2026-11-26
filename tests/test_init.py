@@ -14,6 +14,7 @@ from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.ict_automation.const import CONF_PIN, CONF_RECORDS, DOMAIN
+from custom_components.ict_automation.protege import ProtegeClient
 from custom_components.ict_automation.protege import protocol as p
 
 from .fake_panel import FakePanel
@@ -163,23 +164,133 @@ async def test_unavailable_when_panel_drops(hass: HomeAssistant, entry, panel: F
     await _settle(hass, lambda: hass.states.get("lock.door_1").state == "unavailable")
 
 
-async def test_migrates_v1_entry(hass: HomeAssistant, panel: FakePanel) -> None:
+async def test_migrates_v1_entry_keeping_its_entities(hass: HomeAssistant, panel: FakePanel) -> None:
+    """1.x records and entities carry over: same entity IDs, renamed to the new unique IDs."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         version=1,
         data={CONF_HOST: "127.0.0.1", CONF_PORT: panel.port, "password": "1234"},
-        options={"doors": {"1": "Front"}},
+        options={
+            "doors_config": {"1": "Front"},
+            "inputs_config": "3: Hall PIR\n",
+            "troubles_config": {"1": "AC fail"},
+        },
     )
     entry.add_to_hass(hass)
     ent_reg = er.async_get(hass)
-    ent_reg.async_get_or_create("lock", DOMAIN, "ict_door_1", config_entry=entry)
+    dev_reg = dr.async_get(hass)
+    door_dev = dev_reg.async_get_or_create(config_entry_id=entry.entry_id, identifiers={(DOMAIN, "door_1")})
+    trouble_dev = dev_reg.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, "trouble_1")}
+    )
+    lock = ent_reg.async_get_or_create(
+        "lock", DOMAIN, "ict_door_1", config_entry=entry, device_id=door_dev.id, suggested_object_id="front"
+    )
+    contact = ent_reg.async_get_or_create(
+        "binary_sensor", DOMAIN, "ict_door_contact_1", config_entry=entry, device_id=door_dev.id
+    )
+    pir = ent_reg.async_get_or_create(
+        "binary_sensor", DOMAIN, "ict_input_3", config_entry=entry, suggested_object_id="hall_pir"
+    )
+    trouble = ent_reg.async_get_or_create(
+        "binary_sensor", DOMAIN, "ict_trouble_1", config_entry=entry, device_id=trouble_dev.id
+    )
+    bypass = ent_reg.async_get_or_create("select", DOMAIN, "ict_input_bypass_3", config_entry=entry)
+
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     assert entry.version == 2
     assert entry.data[CONF_PIN] == "1234"
     assert entry.unique_id == "00A1B2C3"
-    assert ent_reg.async_get_entity_id("lock", DOMAIN, "ict_door_1") is None
-    assert hass.states.get("lock.door_1") is not None
+    assert "legacy_v1" not in entry.data
+    assert ent_reg.async_get(lock.entity_id).unique_id == "00A1B2C3_door_1_lock"
+    assert ent_reg.async_get(contact.entity_id).unique_id == "00A1B2C3_door_1_contact"
+    assert ent_reg.async_get(pir.entity_id).unique_id == "00A1B2C3_input_3_input"
+    assert ent_reg.async_get(trouble.entity_id) is not None
+    assert ent_reg.async_get(bypass.entity_id) is None
+    assert hass.states.get("lock.front") is not None
+    assert hass.states.get("binary_sensor.hall_pir") is not None
+    # The typed names carry over, and the scan found the rest of the panel too.
+    names = {(r["type"], r["index"]): r.get("name") for r in entry.data[CONF_RECORDS]}
+    assert names[("door", 1)] == "Front"
+    assert names[("input", 3)] == "Hall PIR"
+    assert ("door", 2) in names
+    assert dev_reg.async_get(door_dev.id).identifiers == {(DOMAIN, "00A1B2C3_door_1")}
+    await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_v1_entry_waits_for_the_panel(hass: HomeAssistant, socket_enabled) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=1,
+        data={CONF_HOST: "127.0.0.1", CONF_PORT: 1, "password": "1234"},
+        options={"doors_config": {"1": "Front"}},
+    )
+    entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.SETUP_RETRY
+    assert entry.data["legacy_v1"] is True
+
+
+async def test_saved_record_that_does_not_answer_is_kept(
+    hass: HomeAssistant, panel: FakePanel, monkeypatch
+) -> None:
+    discover = ProtegeClient.discover
+
+    async def quiet_door_2(self, *args, **kwargs):
+        # Door 2 doesn't answer while records are being found.
+        panel.silent = {(p.GROUP_DOOR, 2)}
+        try:
+            return await discover(self, *args, **{**kwargs, "probe_timeout": 0.1})
+        finally:
+            panel.silent = set()
+
+    monkeypatch.setattr(ProtegeClient, "discover", quiet_door_2)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        unique_id="00A1B2C3",
+        data={
+            CONF_HOST: "127.0.0.1",
+            CONF_PORT: panel.port,
+            CONF_PIN: "1234",
+            CONF_RECORDS: [
+                {"type": "door", "index": 1, "reference": None},
+                {"type": "door", "index": 2, "reference": None, "name": "Gate"},
+                {"type": "door", "index": 7, "reference": None},
+            ],
+        },
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    doors = {r["index"]: r.get("name") for r in entry.data[CONF_RECORDS] if r["type"] == "door"}
+    # Door 2 timed out, so it stays; the panel said door 7 doesn't exist, so it goes.
+    assert doors == {1: None, 2: "Gate"}
+    await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_pinned_records(hass: HomeAssistant, panel: FakePanel) -> None:
+    panel.outputs[300] = ["CP001:09", 0]
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        unique_id="00A1B2C3",
+        data={CONF_HOST: "127.0.0.1", CONF_PORT: panel.port, CONF_PIN: "1234"},
+        options={
+            "pinned_records": [
+                {"type": "output", "index": 300, "reference": None, "name": "Garage light"},
+                {"type": "door", "index": 9, "reference": None},
+            ]
+        },
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert hass.states.get("switch.garage_light") is not None
+    # A pinned ID the panel doesn't have is still kept.
+    assert any(r["type"] == "door" and r["index"] == 9 for r in entry.data[CONF_RECORDS])
     await hass.config_entries.async_unload(entry.entry_id)
 
 
